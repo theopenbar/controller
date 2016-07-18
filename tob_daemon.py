@@ -1,9 +1,10 @@
 #Python Server Daomon to run The Open Bar Control Board and Neo Pixel
 
-
+import sys
+import socket
 import time
-
 from neopixel import *
+from thread import *
 
 # LED strip configuration:
 LED_COUNT      = 16      # Number of LED pixels.
@@ -78,6 +79,7 @@ def theaterChaseRainbow(strip, wait_ms=50):
 DRAIN_TIME_MS = 1000
 RINSE_FILL_TIME_MS = 100
 RINSE_DRAIN_TIME_MS = 1000
+LINE_PURGE_TIME_MS =300
 
 NUM_INGREDIENTS = 18
 MAX_POUR = 8 #oz
@@ -122,17 +124,17 @@ def dispense_ingredient(ingredient_num, amount):
             mcp1.output(pin,GPIO.LOW)
         else if valve >=8 && valve <16:
             pin = valve-8
-            mcp2.output(valve,GPIO.HIGH)
+            mcp2.output(pin,GPIO.HIGH)
             time.sleep(time_ms/1000.0)
             mcp1.output(pin,GPIO.LOW)
         else if valve >=16 && valve <24:
             pin = valve-16
-            mcp3.output(valve,GPIO.HIGH)
+            mcp3.output(pine,GPIO.HIGH)
             time.sleep(time_ms/1000.0)
             mcp1.output(pin,GPIO.LOW)
         else if valve >=24 && valve <32:
             pin = valve-24
-            mcp4.output(valve,GPIO.HIGH)
+            mcp4.output(pin,GPIO.HIGH)
             time.sleep(time_ms/1000.0)
             mcp1.output(pin,GPIO.LOW)
 
@@ -146,6 +148,10 @@ def vac_onoff(on, vac_source):
             mcp4.output(PUMP_PIN, GPIO.HIGH)
             mcp4.output(VAC_SOURCE_CHAMBER_PIN, GPIO.LOW)
             mcp4.output(VAC_SOURCE_DRAIN_PIN, GPIO.HIGH)
+		else:
+	        mcp4.output(PUMP_PIN, GPIO.LOW)
+	        mcp4.output(VAC_SOURCE_CHAMBER_PIN, GPIO.LOW)
+	        mcp4.output(VAC_SOURCE_DRAIN_PIN, GPIO.LOW)
     else:
         mcp4.output(PUMP_PIN, GPIO.LOW)
         mcp4.output(VAC_SOURCE_CHAMBER_PIN, GPIO.LOW)
@@ -153,14 +159,21 @@ def vac_onoff(on, vac_source):
 
 
 def dispense_pressurized_ingredients(drink):
+	#get pressurized ingredients
+
+	#dispense each ingredient for required amount
+
+
 
 def dispense_vacuum_ingredients(drink):
+	#get vaccuum ingredients
 
-def purge_line(time_ms):
+	#dispense each ingredient for required amount
+
+
+def purge_line():
     mcp4.output(AIR_PURGE_PIN, GPIO.HIGH)
-    vac_onoff(True, "DRAIN")
-    time.sleep(time_ms/1000.0)
-    vac_onoff()
+    time.sleep(LINE_PURGE_TIME_MS/1000.0)
     mcp4.output(AIR_PURGE_PIN, GPIO.LOW)
 
 def drain_drink():
@@ -171,6 +184,11 @@ def drain_drink():
     mcp4.output(PRESSURE_RELEASE_PIN, GPIO.LOW)
 
 def fill_rinse():
+	vac_onoff(True, "CHAMBER")
+	mcp4.output(RINSE_TANK_PIN,GPIO.HIGH)
+	time.sleep(RINSE_FILL_TIME_MS/1000.0)
+	mcp4.output(RINSE_TANK_PIN,GPIO.LOW)
+    vac_onoff()
 
 def drain_rinse():
     mcp4.output(PRESSURE_RELEASE_PIN, GPIO.HIGH)
@@ -179,10 +197,27 @@ def drain_rinse():
     vac_onoff()
     mcp4.output(PRESSURE_RELEASE_PIN, GPIO.LOW)
 
-
-
 def pourdrink(drink):
+	vac_onoff(True, "CHAMBER")
+	dispense_pressurized_ingredients(drink)
+	dispense_vacuum_ingredients(drink)
+	purge_line
+	vac_onoff()
+	drain_drink()
 
+def clientthread(conn):
+    try:
+		conn.send('Welcome to the server. Type something and hit enter\n')
+		print >> sys.stderr, 'TOB client connected:', addr
+		while True:
+			data = conn.recv(16)
+			print 'Received ""%s" % data
+			if data:
+				conn.sendall(data)
+			else:
+				break
+	finally:
+		conn.close()
 
 # Main program logic follows:
 if __name__ == '__main__':
@@ -191,9 +226,25 @@ if __name__ == '__main__':
 	# Intialize the library (must be called once before other functions).
 	strip.begin()
 
+	s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+	print >> sys.stderr, 'Starting Server on localhost port 1000'
+
+	try:
+		serversocket.bind(('localhost',1000))
+	except socket.error as msg:
+		print >> sys.stderr 'Bind failed. Error Code : ' + str(msg[0]) + ' Message ' msg[1]
+		sys.exit
+
+	serversocket.listen(5)
+
 	print ('Press Ctrl-C to quit.')
 	while True:
+		print >> sys.stderr, 'TOB waiting for connection'
+		conn, addr = s.accept()
+		start_new_thread(clientthread,(conn,))
 
+
+	s.close()
 		# Color wipe animations.
 """		colorWipe(strip, Color(255, 0, 0))  # Red wipe
 		colorWipe(strip, Color(0, 255, 0))  # Blue wipe
