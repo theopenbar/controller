@@ -226,20 +226,20 @@ def makedrink(drink):
 
 def parse_cmd(cmd, data, conn):
     if cmd == "00":
-        return "OK-00"
+        return "OK"
     elif cmd == "01":
         req = urllib2.Request(BASE_RECIPE_URL + data)
         response = urllib2.urlopen(req)
         recipe = response.read()
-        return "OK-01"
+        return "OK"
     elif cmd == "02":
-        return "OK-02"
+        return "OK"
     elif cmd == "03":
         testLEDs()
-        return "OK-03"
+        return "OK"
     else:
         print >> sys.stderr, 'Unable to Parse Command'
-        return 'Unknown Command'
+        return 'ERROR'
 
 
 # Main program logic follows:
@@ -270,18 +270,16 @@ if __name__ == '__main__':
                     data = data[1:33]
                     print 'Recieved Data: "%s"' % data
                 else:
-                    data = 'Command Only'
+                    data = 'COMMAND'
                 response = parse_cmd(cmd, data, conn)
                 if response:
                     conn.sendall(response)
             except KeyboardInterrupt:
-                conn.sendall('Server Shutting Down\r\n')
                 raise
             except:
-                conn.sendall('Bad Command or Error Occurred\r\n')
+                conn.sendall('ERROR')
             finally:
                 conn.close()
     except KeyboardInterrupt:
         print 'Goodbye'
     s.close()
-    print 'reached end of program'
