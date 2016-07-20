@@ -110,12 +110,12 @@ LINE_PURGE_TIME_MS =300
 NUM_INGREDIENTS = 18
 MAX_POUR = 8 #oz
 
-PRESSURE_RELEASE_PIN = 2
-VAC_SOURCE_CHAMBER_PIN = 3
-VAC_SOURCE_DRAIN_PIN = 4
-DRAIN_PIN = 5
-RINSE_TANK_PIN = 6
-AIR_PURGE_PIN = 7
+PRESSURE_RELEASE_VALVE = 27
+VAC_SOURCE_CHAMBER_VALVE = 28
+VAC_SOURCE_DRAIN_VALVE = 29
+DRAIN_VALVE =30
+RINSE_TANK_VALVE = 31
+AIR_PURGE_VALVE = 32
 
 """
 mcp1 = setup_mcp(address=0x20)
@@ -123,37 +123,39 @@ mcp2 = setup_mcp(address=0x21)
 mcp3 = setup_mcp(address=0x22)
 mcp4 = setup_mcp(address=0x23)
 """
-def setup_mcp(address=0x20):
+def setup_mcps(io_board, address=0x20):
     mcp = MCP230xx.MCP23008(address)
     mcp.write_gpio(0x00)
     mcp.write_gppu(0xFF)
     mcp.write_iodir(0x00)
     return mcp
 
+def activate_valve(valve, time_ms):
+    if valve >0 and valve <=8:
+        pin = valve-1
+        mcp1.output(pin,GPIO.HIGH)
+        time.sleep(time_ms/1000.0)
+        mcp1.output(pin,GPIO.LOW)
+    elif valve >8 and valve <=16:
+        pin = valve-9
+        mcp2.output(pin,GPIO.HIGH)
+        time.sleep(time_ms/1000.0)
+        mcp1.output(pin,GPIO.LOW)
+    elif valve >16 and valve <=24:
+        pin = valve-17
+        mcp3.output(pin,GPIO.HIGH)
+        time.sleep(time_ms/1000.0)
+        mcp1.output(pin,GPIO.LOW)
+    elif valve >24 and valve <=32:
+        pin = valve-25
+        mcp4.output(pin,GPIO.HIGH)
+        time.sleep(time_ms/1000.0)
+        mcp1.output(pin,GPIO.LOW)
+
 def dispense_ingredient(ingredient_num, amount):
     if ingredient_num <= NUM_INGREDIENTS and amount > 0 and amount <= MAX_POUR:
-        valve = ingredient_num - 1
         time_ms=amount*flow_factor[valve]
-        if valve >=0 and valve <8:
-            pin = valve
-            mcp1.output(pin,GPIO.HIGH)
-            time.sleep(time_ms/1000.0)
-            mcp1.output(pin,GPIO.LOW)
-        elif valve >=8 and valve <16:
-            pin = valve-8
-            mcp2.output(pin,GPIO.HIGH)
-            time.sleep(time_ms/1000.0)
-            mcp1.output(pin,GPIO.LOW)
-        elif valve >=16 and valve <24:
-            pin = valve-16
-            mcp3.output(pine,GPIO.HIGH)
-            time.sleep(time_ms/1000.0)
-            mcp1.output(pin,GPIO.LOW)
-        elif valve >=24 and valve <32:
-            pin = valve-24
-            mcp4.output(pin,GPIO.HIGH)
-            time.sleep(time_ms/1000.0)
-            mcp1.output(pin,GPIO.LOW)
+        activate_valve(ingredient_num, time_ms)
 
 def vac_onoff(on, vac_source):
     if on:
