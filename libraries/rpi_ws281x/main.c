@@ -63,7 +63,7 @@ static char VERSION[] = "testing...";
 //#define STRIP_TYPE				             SK6812_STRIP_RGBW		// SK6812RGBW (NOT SK6812RGB)
 
 #define WIDTH                                    8
-#define HEIGHT                                   8
+#define HEIGHT                                   1
 #define LED_COUNT                                (WIDTH * HEIGHT)
 
 int width = WIDTH;
@@ -82,7 +82,7 @@ ws2811_t ledstring =
         {
             .gpionum = GPIO_PIN,
             .count = LED_COUNT,
-            .invert = 0,
+            .invert = 1,
             .brightness = 255,
             .strip_type = STRIP_TYPE,
         },
