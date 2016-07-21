@@ -120,7 +120,7 @@ RINSE_TANK_VALVE = 31
 AIR_PURGE_VALVE = 32
 
 
-def setup_valves(io_board, address=0x20):
+def setup_valves(address=0x20):
     io_board[0] = MCP230xx.MCP23008(address)
     io_board[1] = MCP230xx.MCP23008((address+0x1))
     io_board[2] = MCP230xx.MCP23008((address+0x2))
@@ -137,6 +137,7 @@ def setup_valves(io_board, address=0x20):
     io_board[1].write_iodir(0x00)
     io_board[2].write_iodir(0x00)
     io_board[3].write_iodir(0x00)
+    return io_bard
 
 def activate_valve(valve, io_board, time_ms=0, on=True):
     if valve >0 and valve <=8:
@@ -145,7 +146,7 @@ def activate_valve(valve, io_board, time_ms=0, on=True):
             io_board[0].output(pin,GPIO.HIGH)
         if time_ms > 0:
             time.sleep(time_ms/1000.0)
-        if !on or time_ms > 0:
+        if (not on) or time_ms > 0:
             io_board[0].output(pin,GPIO.LOW)
     elif valve >8 and valve <=16:
         pin = valve-9
@@ -153,7 +154,7 @@ def activate_valve(valve, io_board, time_ms=0, on=True):
             io_board[1].output(pin,GPIO.HIGH)
         if time_ms > 0:
             time.sleep(time_ms/1000.0)
-        if !on or time_ms > 0:
+        if (not on) or time_ms > 0:
             io_board[1].output(pin,GPIO.LOW)
     elif valve >16 and valve <=24:
         pin = valve-17
@@ -161,7 +162,7 @@ def activate_valve(valve, io_board, time_ms=0, on=True):
             io_board[2].output(pin,GPIO.HIGH)
         if time_ms > 0:
             time.sleep(time_ms/1000.0)
-        if !on or time_ms > 0:
+        if (not on) or time_ms > 0:
             io_board[2].output(pin,GPIO.LOW)
     elif valve >24 and valve <=32:
         pin = valve-25
@@ -169,7 +170,7 @@ def activate_valve(valve, io_board, time_ms=0, on=True):
             io_board[3].output(pin,GPIO.HIGH)
         if time_ms > 0:
             time.sleep(time_ms/1000.0)
-        if !on or time_ms > 0:
+        if (not on) or time_ms > 0:
             io_board[3].output(pin,GPIO.LOW)
 
 def dispense_ingredient(io_board, ingredient_num, amount):
@@ -198,11 +199,11 @@ def vac_onoff(io_board, vac_source="CHAMBER", on=False):
 
 def bubbles_onoff(io_board, on=False):
     if on:
-        activate_valve(io_board=io_board, valve=PRESSURE_RELEASE_VALVE)
+        activate_valve(io_board=io_board, valve=AIR_PURGE_VALVE)
         vac_onoff(io_board=io_board, vac_source="CHAMBER", on=True)
     else:
         vac_onoff(io_board=io_board)
-        activate_valve(io_board=io_board, valve=PRESSURE_RELEASE_VALVE, on=False)
+        activate_valve(io_board=io_board, valve=AIR_PURGE_VALVE, on=False)
 
 def dispense_pressurized_ingredients(io_board, drink):
     #get pressurized ingredients
@@ -236,8 +237,8 @@ def drain_rinse(io_board):
     activate_valve(io_board=io_board, valve=PRESSURE_RELEASE_VALVE, on=False)
 
 def makedrink(io_board, drink):
-    vac_onoff(io_board=io_board, vac_source="CHAMBER", on=True)
     dispense_pressurized_ingredients(io_board, drink)
+    vac_onoff(io_board=io_board, vac_source="CHAMBER", on=True)
     dispense_vacuum_ingredients(io_board, drink)
     #PURGE INGREDIENTS SUPPLY LINE
     activate_valve(io_board=io_board, valve=AIR_PURGE_VALVE, time_ms=LINE_PURGE_TIME_MS)
@@ -251,6 +252,7 @@ def parse_cmd(cmd, data, conn, io_board):
         req = urllib2.Request(BASE_RECIPE_URL + data)
         response = urllib2.urlopen(req)
         recipe = response.read()
+        print recipe
         #makedrink(io_board, recipe)
         return "OK"
     elif cmd == "02": #Make Recipe Selected by User with ID (data)
@@ -274,7 +276,7 @@ def parse_cmd(cmd, data, conn, io_board):
         bubbles_onoff(io_board, on=True)
         return "OK"
     elif cmd == "09": #Turn off Vacuum (BUBBLES/PURGE)
-        bubbles_onoff(io_board)
+        bubbles_onoff(io_board, on=False)
         return "OK"
     else:
         print >> sys.stderr, 'Unable to Parse Command'
@@ -283,7 +285,7 @@ def parse_cmd(cmd, data, conn, io_board):
 
 # Main program logic follows:
 if __name__ == '__main__':
-
+    io_board = ''
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     print >> sys.stderr, 'Starting Server on localhost port 1000'
 
@@ -292,7 +294,7 @@ if __name__ == '__main__':
     except socket.error as msg:
         print >> sys.stderr, 'Bind failed. Error Code: ' + str(msg[0]) + ' Message: ' + msg[1]
 
-    s.listen(5)
+    s.listen(1) #ensure only one client can control the unit at a time
 
     print ('Press Ctrl-C to quit.')
     try:
@@ -309,15 +311,17 @@ if __name__ == '__main__':
                     print 'Recieved Data: "%s"' % data
                 else:
                     data = 'COMMAND'
-                response = parse_cmd(cmd, data, conn)
+                response = parse_cmd(cmd, data, conn, io_board)
                 if response:
                     conn.sendall(response)
             except KeyboardInterrupt:
                 raise
             except:
                 conn.sendall('ERROR')
+                raise###
             finally:
                 conn.close()
     except KeyboardInterrupt:
+        raise ###
         print 'Goodbye'
     s.close()
