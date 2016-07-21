@@ -4,6 +4,7 @@ import sys
 import socket
 import time
 import urllib2
+import json
 from thread import *
 
 from Adafruit_GPIO import MCP230xx
@@ -110,6 +111,7 @@ LINE_PURGE_TIME_MS =300
 NUM_INGREDIENTS = 18
 MAX_POUR = 8 #oz
 
+PUMP_PIN = 26
 PRESSURE_RELEASE_VALVE = 27
 VAC_SOURCE_CHAMBER_VALVE = 28
 VAC_SOURCE_DRAIN_VALVE = 29
@@ -117,125 +119,162 @@ DRAIN_VALVE =30
 RINSE_TANK_VALVE = 31
 AIR_PURGE_VALVE = 32
 
-"""
-mcp1 = setup_mcp(address=0x20)
-mcp2 = setup_mcp(address=0x21)
-mcp3 = setup_mcp(address=0x22)
-mcp4 = setup_mcp(address=0x23)
-"""
-def setup_mcps(io_board, address=0x20):
-    mcp = MCP230xx.MCP23008(address)
-    mcp.write_gpio(0x00)
-    mcp.write_gppu(0xFF)
-    mcp.write_iodir(0x00)
-    return mcp
 
-def activate_valve(valve, time_ms):
+def setup_valves(io_board, address=0x20):
+    io_board[0] = MCP230xx.MCP23008(address)
+    io_board[1] = MCP230xx.MCP23008((address+0x1))
+    io_board[2] = MCP230xx.MCP23008((address+0x2))
+    io_board[3] = MCP230xx.MCP23008((address+0x3))
+    io_board[0].write_gpio(0x00)
+    io_board[1].write_gpio(0x00)
+    io_board[2].write_gpio(0x00)
+    io_board[3].write_gpio(0x00)
+    io_board[0].write_gppu(0xFF)
+    io_board[1].write_gppu(0xFF)
+    io_board[2].write_gppu(0xFF)
+    io_board[3].write_gppu(0xFF)
+    io_board[0].write_iodir(0x00)
+    io_board[1].write_iodir(0x00)
+    io_board[2].write_iodir(0x00)
+    io_board[3].write_iodir(0x00)
+
+def activate_valve(valve, io_board, time_ms=0, on=True):
     if valve >0 and valve <=8:
         pin = valve-1
-        mcp1.output(pin,GPIO.HIGH)
-        time.sleep(time_ms/1000.0)
-        mcp1.output(pin,GPIO.LOW)
+        if on:
+            io_board[0].output(pin,GPIO.HIGH)
+        if time_ms > 0:
+            time.sleep(time_ms/1000.0)
+        if !on or time_ms > 0:
+            io_board[0].output(pin,GPIO.LOW)
     elif valve >8 and valve <=16:
         pin = valve-9
-        mcp2.output(pin,GPIO.HIGH)
-        time.sleep(time_ms/1000.0)
-        mcp1.output(pin,GPIO.LOW)
+        if on:
+            io_board[1].output(pin,GPIO.HIGH)
+        if time_ms > 0:
+            time.sleep(time_ms/1000.0)
+        if !on or time_ms > 0:
+            io_board[1].output(pin,GPIO.LOW)
     elif valve >16 and valve <=24:
         pin = valve-17
-        mcp3.output(pin,GPIO.HIGH)
-        time.sleep(time_ms/1000.0)
-        mcp1.output(pin,GPIO.LOW)
+        if on:
+            io_board[2].output(pin,GPIO.HIGH)
+        if time_ms > 0:
+            time.sleep(time_ms/1000.0)
+        if !on or time_ms > 0:
+            io_board[2].output(pin,GPIO.LOW)
     elif valve >24 and valve <=32:
         pin = valve-25
-        mcp4.output(pin,GPIO.HIGH)
-        time.sleep(time_ms/1000.0)
-        mcp1.output(pin,GPIO.LOW)
+        if on:
+            io_board[3].output(pin,GPIO.HIGH)
+        if time_ms > 0:
+            time.sleep(time_ms/1000.0)
+        if !on or time_ms > 0:
+            io_board[3].output(pin,GPIO.LOW)
 
-def dispense_ingredient(ingredient_num, amount):
+def dispense_ingredient(io_board, ingredient_num, amount):
     if ingredient_num <= NUM_INGREDIENTS and amount > 0 and amount <= MAX_POUR:
         time_ms=amount*flow_factor[valve]
-        activate_valve(ingredient_num, time_ms)
+        activate_valve(io_board=io_board, valve=ingredient_num, time_ms=time_ms)
 
-def vac_onoff(on, vac_source):
+def vac_onoff(io_board, vac_source="CHAMBER", on=False):
     if on:
         if vac_source == "CHAMBER":
-            mcp4.output(PUMP_PIN, GPIO.HIGH)
-            mcp4.output(VAC_SOURCE_CHAMBER_PIN, GPIO.HIGH)
-            mcp4.output(VAC_SOURCE_DRAIN_PIN, GPIO.LOW)
+            activate_valve(io_board=io_board, valve=PUMP_PIN)
+            activate_valve(io_board=io_board, valve=VAC_SOURCE_CHAMBER_VALVE)
+            activate_valve(io_board=io_board, valve=VAC_SOURCE_DRAIN_VALVE, on=False)
         elif vac_source == "DRAIN":
-            mcp4.output(PUMP_PIN, GPIO.HIGH)
-            mcp4.output(VAC_SOURCE_CHAMBER_PIN, GPIO.LOW)
-            mcp4.output(VAC_SOURCE_DRAIN_PIN, GPIO.HIGH)
+            activate_valve(io_board=io_board, valve=PUMP_PIN)
+            activate_valve(io_board=io_board, valve=VAC_SOURCE_CHAMBER_VALVE, on=False)
+            activate_valve(io_board=io_board, valve=VAC_SOURCE_DRAIN_VALVE)
         else:
-            mcp4.output(PUMP_PIN, GPIO.LOW)
-            mcp4.output(VAC_SOURCE_CHAMBER_PIN, GPIO.LOW)
-            mcp4.output(VAC_SOURCE_DRAIN_PIN, GPIO.LOW)
+            activate_valve(io_board=io_board, valve=PUMP_PIN, on=False)
+            activate_valve(io_board=io_board, valve=VAC_SOURCE_CHAMBER_VALVE, on=False)
+            activate_valve(io_board=io_board, valve=VAC_SOURCE_DRAIN_VALVE, on=False)
     else:
-        mcp4.output(PUMP_PIN, GPIO.LOW)
-        mcp4.output(VAC_SOURCE_CHAMBER_PIN, GPIO.LOW)
-        mcp4.output(VAC_SOURCE_DRAIN_PIN, GPIO.LOW)
+        activate_valve(io_board=io_board, valve=PUMP_PIN, on=False)
+        activate_valve(io_board=io_board, valve=VAC_SOURCE_CHAMBER_VALVE, on=False)
+        activate_valve(io_board=io_board, valve=VAC_SOURCE_DRAIN_VALVE, on=False)
 
+def bubbles_onoff(io_board, on=False):
+    if on:
+        activate_valve(io_board=io_board, valve=PRESSURE_RELEASE_VALVE)
+        vac_onoff(io_board=io_board, vac_source="CHAMBER", on=True)
+    else:
+        vac_onoff(io_board=io_board)
+        activate_valve(io_board=io_board, valve=PRESSURE_RELEASE_VALVE, on=False)
 
-def dispense_pressurized_ingredients(drink):
+def dispense_pressurized_ingredients(io_board, drink):
     #get pressurized ingredients
     pass
     #dispense each ingredient for required amount
 
 
 
-def dispense_vacuum_ingredients(drink):
+def dispense_vacuum_ingredients(io_board, drink):
     #get vaccuum ingredients
     pass
     #dispense each ingredient for required amount
 
-
-def purge_line():
-    mcp4.output(AIR_PURGE_PIN, GPIO.HIGH)
-    time.sleep(LINE_PURGE_TIME_MS/1000.0)
-    mcp4.output(AIR_PURGE_PIN, GPIO.LOW)
-
-def drain_drink():
-    mcp4.output(PRESSURE_RELEASE_PIN, GPIO.HIGH)
-    mcp4.output(DRAIN_PIN, GPIO.HIGH)
+def drain_drink(io_board):
+    activate_valve(io_board=io_board, valve=PRESSURE_RELEASE_VALVE)
+    activate_valve(io_board=io_board, valve=DRAIN_VALVE)
     time.sleep(DRAIN_TIME_MS/1000.0)
-    mcp4.output(DRAIN_PIN, GPIO.LOW)
-    mcp4.output(PRESSURE_RELEASE_PIN, GPIO.LOW)
+    activate_valve(io_board=io_board, valve=DRAIN_VALVE, on=False)
+    activate_valve(io_board=io_board, valve=PRESSURE_RELEASE_VALVE, on=False)
 
-def fill_rinse():
-    vac_onoff(True, "CHAMBER")
-    mcp4.output(RINSE_TANK_PIN,GPIO.HIGH)
-    time.sleep(RINSE_FILL_TIME_MS/1000.0)
-    mcp4.output(RINSE_TANK_PIN,GPIO.LOW)
-    vac_onoff()
+def fill_rinse(io_board):
+    vac_onoff(io_board=io_board, vac_source="CHAMBER", on=True)
+    activate_valve(io_board=io_board, valve=RINSE_TANK_VALVE, time_ms=RINSE_FILL_TIME_MS)
+    vac_onoff(io_board=io_board)
 
-def drain_rinse():
-    mcp4.output(PRESSURE_RELEASE_PIN, GPIO.HIGH)
-    vac_onoff(True, "DRAIN")
+def drain_rinse(io_board):
+    activate_valve(io_board=io_board, valve=PRESSURE_RELEASE_VALVE)
+    vac_onoff(io_board=io_board, vac_source="DRAIN", on=True)
     time.sleep(RINSE_DRAIN_TIME_MS/1000.0)
-    vac_onoff()
-    mcp4.output(PRESSURE_RELEASE_PIN, GPIO.LOW)
+    vac_onoff(io_board=io_board)
+    activate_valve(io_board=io_board, valve=PRESSURE_RELEASE_VALVE, on=False)
 
-def makedrink(drink):
-    vac_onoff(True, "CHAMBER")
-    dispense_pressurized_ingredients(drink)
-    dispense_vacuum_ingredients(drink)
-    purge_line
-    vac_onoff()
-    drain_drink()
+def makedrink(io_board, drink):
+    vac_onoff(io_board=io_board, vac_source="CHAMBER", on=True)
+    dispense_pressurized_ingredients(io_board, drink)
+    dispense_vacuum_ingredients(io_board, drink)
+    #PURGE INGREDIENTS SUPPLY LINE
+    activate_valve(io_board=io_board, valve=AIR_PURGE_VALVE, time_ms=LINE_PURGE_TIME_MS)
+    vac_onoff(io_board)
+    drain_drink(io_board)
 
-def parse_cmd(cmd, data, conn):
-    if cmd == "00":
+def parse_cmd(cmd, data, conn, io_board):
+    if cmd == "00": #reset
         return "OK"
-    elif cmd == "01":
+    elif cmd == "01": #Make Recipe with ID (data)
         req = urllib2.Request(BASE_RECIPE_URL + data)
         response = urllib2.urlopen(req)
         recipe = response.read()
+        #makedrink(io_board, recipe)
         return "OK"
-    elif cmd == "02":
+    elif cmd == "02": #Make Recipe Selected by User with ID (data)
         return "OK"
-    elif cmd == "03":
+    elif cmd == "03": #Test Neopixel Ring
         testLEDs()
+        return "OK"
+    elif cmd == "04": #Open Valve number (data)
+        activate_valve(io_board=io_board, valve=int(data))
+        return "OK"
+    elif cmd == "05": #Close Valve number (data)
+        activate_valve(io_board=io_board, valve=int(data), on=False)
+        return "OK"
+    elif cmd == "06": #Fill Rinse
+        fill_rinse(io_board)
+        return "OK"
+    elif cmd == "07": #Drain Rinse
+        drain_rinse(io_board)
+        return "OK"
+    elif cmd == "08": #Activate Vacuum (BUBBLES/PURGE)
+        bubbles_onoff(io_board, on=True)
+        return "OK"
+    elif cmd == "09": #Turn off Vacuum (BUBBLES/PURGE)
+        bubbles_onoff(io_board)
         return "OK"
     else:
         print >> sys.stderr, 'Unable to Parse Command'
@@ -261,7 +300,6 @@ if __name__ == '__main__':
             print >> sys.stderr, 'TOB waiting for connection'
             conn, addr = s.accept()
             try:
-                conn.send('Welcome to the server. Type something and hit enter\r\n')
                 print >> sys.stderr, 'TOB client connected:', addr
                 cmd = conn.recv(2)
                 print 'Received Command: "%s"' % cmd
