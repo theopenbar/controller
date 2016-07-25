@@ -140,43 +140,35 @@ def activate_valve(valve, io_board, time_ms=0, on=True):
     if valve >0 and valve <=8:
         pin = valve-1
         if on:
-            pass
-            #io_board[0].output(pin,ON)
+            io_board[0].output(pin,ON)
         if time_ms > 0:
             time.sleep(time_ms/1000.0)
         if (not on) or time_ms > 0:
-            pass
-            #io_board[0].output(pin,OFF)
+            io_board[0].output(pin,OFF)
     elif valve >8 and valve <=16:
         pin = valve-9
         if on:
-            pass
-            #io_board[1].output(pin,ON)
+            io_board[1].output(pin,ON)
         if time_ms > 0:
             time.sleep(time_ms/1000.0)
         if (not on) or time_ms > 0:
-            pass
-            #io_board[1].output(pin,OFF)
+            io_board[1].output(pin,OFF)
     elif valve >16 and valve <=24:
         pin = valve-17
         if on:
-            pass
-            #io_board[2].output(pin,ON)
+            io_board[2].output(pin,ON)
         if time_ms > 0:
             time.sleep(time_ms/1000.0)
         if (not on) or time_ms > 0:
-            pass
-            #io_board[2].output(pin,OFF)
+            io_board[2].output(pin,OFF)
     elif valve >24 and valve <=32:
         pin = valve-25
         if on:
-            pass
-            #io_board[3].output(pin,ON)
+            io_board[3].output(pin,ON)
         if time_ms > 0:
             time.sleep(time_ms/1000.0)
         if (not on) or time_ms > 0:
-            pass
-            #io_board[3].output(pin,OFF)
+            io_board[3].output(pin,OFF)
 
 def testValves (io_board, time_ms):
     for i in range(1, 32):
