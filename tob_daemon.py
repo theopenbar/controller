@@ -140,35 +140,43 @@ def activate_valve(valve, io_board, time_ms=0, on=True):
     if valve >0 and valve <=8:
         pin = valve-1
         if on:
-            io_board[0].output(pin,ON)
+            pass
+            #io_board[0].output(pin,ON)
         if time_ms > 0:
             time.sleep(time_ms/1000.0)
         if (not on) or time_ms > 0:
-            io_board[0].output(pin,OFF)
+            pass
+            #io_board[0].output(pin,OFF)
     elif valve >8 and valve <=16:
         pin = valve-9
         if on:
-            io_board[1].output(pin,ON)
+            pass
+            #io_board[1].output(pin,ON)
         if time_ms > 0:
             time.sleep(time_ms/1000.0)
         if (not on) or time_ms > 0:
-            io_board[1].output(pin,OFF)
+            pass
+            #io_board[1].output(pin,OFF)
     elif valve >16 and valve <=24:
         pin = valve-17
         if on:
-            io_board[2].output(pin,ON)
+            pass
+            #io_board[2].output(pin,ON)
         if time_ms > 0:
             time.sleep(time_ms/1000.0)
         if (not on) or time_ms > 0:
-            io_board[2].output(pin,OFF)
+            pass
+            #io_board[2].output(pin,OFF)
     elif valve >24 and valve <=32:
         pin = valve-25
         if on:
-            io_board[3].output(pin,ON)
+            pass
+            #io_board[3].output(pin,ON)
         if time_ms > 0:
             time.sleep(time_ms/1000.0)
         if (not on) or time_ms > 0:
-            io_board[3].output(pin,OFF)
+            pass
+            #io_board[3].output(pin,OFF)
 
 def testValves (io_board, time_ms):
     for i in range(1, 32):
@@ -391,11 +399,9 @@ if __name__ == '__main__':
         setup_valves(io_board)
     except:
         print >> sys.stderr, '[ERROR] Could Not Setup IO Board'
-        raise
     try:
         ledThread = thread.start_new_thread(ledWorker,())
     except:
-        raise
         print >> sys.stderr, '[ERROR] Could Not Setup LED thread'
     try:
         pull_station_data(STATION_ID)
@@ -431,9 +437,10 @@ if __name__ == '__main__':
                 raise
             except:
                 conn.sendall('08 ERROR')
+                raise
+            else:
+                conn.close()
         except KeyboardInterrupt:
             stop = True
-        finally:
-            conn.close()
     print '\r\nGoodbye!\r\n'
     s.close()
