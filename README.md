@@ -9,7 +9,18 @@ For complete functionality, install on a Raspberry Pi running Raspbian.
 cd libraries/Adafruit_Python_GPIO
 sudo python setup.py install
 ```
-2. Build rpi_ws281x:
-```
-...nobody knows...
-```
+2. Build `rpi_ws281x`:
+    1.  Install `scons`
+        - On linux:
+        ```
+        sudo apt-get install scons
+        ```
+        - On OSX:
+        ```
+        brew install scons
+        ```
+    2. Build using `scons`
+    ```
+    cd libraries/rpi_ws281x/
+    scons
+    ```
