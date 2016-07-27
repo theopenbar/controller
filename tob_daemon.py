@@ -89,12 +89,16 @@ BASE_RECIPE_URL = 'http://theopenbar.herokuapp.com/api/drinks/'
 BASE_STATIONQUERY_URL = 'http://theopenbar.herokuapp.com/api/station/'
 STATION_ID = '56a2be2d5d08dd13939871de'
 
-RINSE_FILL_TIME_MS = 75000          #Time to run pump to fill chamber for rinse cycle
-RINSE_DRAIN_TIME_MS = 100000         #Time to run drain cycle to remove rinse
+FLOW_FACTOR_MS_OZ_UNPRESSURIZED = 4570  #ms per oz dispensed for vacuum ingredients
+FLOW_FACTOR_MS_OZ_PRESSURIZED = 4570    #ms per oz dispensed for pressurized ingredients
+TRAVEL_TIME_MS = 800                #Time for liquid to travel from bottle to valve
+RINSE_FILL_TIME_MS = 40000          #Time to run pump to fill chamber for rinse cycle
+RINSE_DRAIN_TIME_MS = 50000         #Time to run drain cycle to remove rinse
 LINE_PURGE_TIME_MS =5000            #Time to purge ingredient line to chamber after all ingredients
 VALVE_TEST_INTERVAL_MS = 1000       #Time interval for the valve test sequence
 PRESSURED_DRAIN_TIME_MULT = 2       #Ratio of drain time to fill time for pressurized ingredients
-UNPRESSURED_DRAIN_TIME_MULT = 7500   #Ratio of drain time to fill time for unpressurized ingredients
+UNPRESSURED_DRAIN_TIME_MULT = 2     #Ratio of drain time to fill time for unpressurized ingredients
+DRAIN_TIME_ADDON_MS = 3000          #Additional fixed drain time for each drain cycle
 
 MAX_DRINK_SIZE = 12 #oz             #Max drink size that chamber can accomodate
 
@@ -104,7 +108,7 @@ PRESSURE_RELEASE_VALVE = 31
 VAC_SOURCE_CHAMBER_VALVE = 29
 VAC_SOURCE_DRAIN_VALVE = 30
 DRAIN_VALVE =26
-RINSE_TANK_VALVE = 9
+RINSE_TANK_VALVE = 1
 AIR_PURGE_VALVE = 28
 
 ON = 1
@@ -211,11 +215,11 @@ def dispense_pressurized_ingredients(io_board, recipe_j, conn):
         ingredient = recipe_j['recipe'][i]['ingredient']
         if ingredients[ingredient]['pressurized'] == True:
             amount = recipe_j['recipe'][i]['amount']
-            time_ms=amount*ingredients[ingredient]['flow_factor']
+            time_ms=amount*FLOW_FACTOR_MS_OZ_PRESSURIZED
             total_time = time_ms + total_time
-            activate_valve(io_board=io_board, valve=ingredients[ingredient]['valve'], time_ms=time_ms)
             length = len(ingredient)
             conn.sendall(str(length+14) + ' Dispensing ' + ingredient)
+            activate_valve(io_board=io_board, valve=ingredients[ingredient]['valve'], time_ms=time_ms)
     return total_time
 
 def dispense_vacuum_ingredients(io_board, recipe_j, conn):
@@ -224,11 +228,11 @@ def dispense_vacuum_ingredients(io_board, recipe_j, conn):
         ingredient = recipe_j['recipe'][i]['ingredient']
         if ingredients[ingredient]['pressurized'] == False:
             amount = recipe_j['recipe'][i]['amount']
-            time_ms=amount*ingredients[ingredient]['flow_factor']
+            time_ms=amount*FLOW_FACTOR_MS_OZ_UNPRESSURIZED
             total_time = time_ms + total_time
-            activate_valve(io_board=io_board, valve=ingredients[ingredient]['valve'], time_ms=time_ms)
             length = len(ingredient)
             conn.sendall(str(length+14) + ' Dispensing ' + ingredient)
+            activate_valve(io_board=io_board, valve=ingredients[ingredient]['valve'], time_ms=time_ms + TRAVEL_TIME_MS)
     return total_time
 
 def check_amounts(recipe_j, conn):
@@ -296,7 +300,7 @@ def makedrink(io_board, recipe_j, conn):
         #PURGE INGREDIENTS SUPPLY LINE
         activate_valve(io_board=io_board, valve=AIR_PURGE_VALVE, time_ms=LINE_PURGE_TIME_MS)
         vac_onoff(io_board)
-        drain_time = time1*PRESSURED_DRAIN_TIME_MULT + time2*UNPRESSURED_DRAIN_TIME_MULT
+        drain_time = time1*PRESSURED_DRAIN_TIME_MULT + time2*UNPRESSURED_DRAIN_TIME_MULT + DRAIN_TIME_ADDON_MS
         drain_drink(io_board, conn, drain_time)
         LED_pattern = 0
         update_amounts(recipe_j, conn)
@@ -306,7 +310,9 @@ def pull_station_data(stationID):
     response = urllib2.urlopen(req)
     station_j = json.load(response)
     for i in range(0, len(station_j['ingredients'])):
-        ingredients[station_j['ingredients'][i]['type']] = station_j['ingredients'][i]
+        ingredient = station_j['ingredients'][i]['type']
+        if ingredient != '':
+            ingredients[ingredient] = station_j['ingredients'][i]
 
 def reset(io_board):
     setup_valves(io_board)
@@ -425,10 +431,12 @@ if __name__ == '__main__':
                 response = parse_cmd(cmd, data, conn, io_board)
                 if response:
                     conn.sendall(response)
+                    print response
             except KeyboardInterrupt:
                 raise
             except:
                 conn.sendall('08 ERROR')
+                print 'ERROR'
                 raise
             else:
                 conn.close()
