@@ -7,13 +7,58 @@ import urllib
 import urllib2
 import json
 import thread
+import threading
 import httplib
+import ConfigParser
+
 from Adafruit_GPIO import MCP230xx
 from neopixel import *
 
-import config as c
+##################################################################################################
+#Configuration Parameteres
+##################################################################################################
+parser = ConfigParser.SafeConfigParser()
+parser.read('config.ini')
+BIND_IP = parser.get('SocketBindings', 'host')
+BIND_PORT = parser.getint('SocketBindings', 'port')
+API_HOST = parser.get('API', 'api_host')
+BASE_API_HOST_URL = parser.get('API', 'base_url')
+RECIPE_URL = parser.get('API', 'recipe_route')
+USERQUERY_URL = parser.get('API', 'user_route')
+STATIONQUERY_URL = parser.get('API', 'station_route')
+STATIONPOST_URL = parser.get('API', 'ingredient_route')
+STATION_ID = "" #set in main
+STATION_AUTH = "" #set in main
+FLOW_FACTOR_MS_OZ_UNPRESSURIZED = parser.getint('StationCalibration', 'flow_factor_ms_oz_unpressurized')
+FLOW_FACTOR_MS_OZ_PRESSURIZED = parser.getint('StationCalibration', 'flow_factor_ms_oz_pressurized')
+TRAVEL_TIME_MS = parser.getint('StationCalibration', 'travel_time_ms')
+RINSE_FILL_TIME_MS = parser.getint('StationCalibration', 'full_rinse_fill_time_ms')
+RINSE_DRAIN_TIME_MS = parser.getint('StationCalibration', 'full_rinse_drain_time_ms')
+LINE_PURGE_TIME_MS = parser.getint('StationCalibration', 'line_purge_time_ms')
+VALVE_TEST_INTERVAL_MS = parser.getint('StationCalibration', 'valve_test_interval_ms')
+PRESSURED_DRAIN_TIME_MULT = parser.getint('StationCalibration', 'pressured_drain_time_mult')
+UNPRESSURED_DRAIN_TIME_MULT = parser.getint('StationCalibration', 'unpressured_drain_time_mult')
+DRAIN_TIME_ADDON_MS = parser.getint('StationCalibration', 'drain_time_addon_ms')
+MAX_DRINK_SIZE = parser.getint('StationCalibration', 'max_drink_size_oz')
+PUMP_OUTPUT = parser.getint('OutputMapping', 'pump_output')
+PRESSURE_RELEASE_VALVE = parser.getint('OutputMapping', 'pressure_release_valve')
+VAC_SOURCE_CHAMBER_VALVE = parser.getint('OutputMapping', 'vac_source_chamber_valve')
+VAC_SOURCE_DRAIN_VALVE = parser.getint('OutputMapping', 'vac_source_drain_valve')
+DRAIN_VALVE = parser.getint('OutputMapping', 'drain_valve')
+RINSE_TANK_VALVE = parser.getint('OutputMapping', 'rinse_tank_valve')
+AIR_PURGE_VALVE = parser.getint('OutputMapping', 'air_purge_valve')
+ON = parser.getint('OutputMapping', 'on')
+OFF =parser.getint('OutputMapping', 'off')
+LED_COUNT      = parser.getint('LED', 'led_count')
+LED_PIN        = parser.getint('LED', 'led_pin')
+LED_FREQ_HZ    = parser.getint('LED', 'led_freq_hz')
+LED_DMA        = parser.getint('LED', 'led_dma')
+LED_BRIGHTNESS = parser.getint('LED', 'led_brightness')
+LED_INVERT     = parser.getboolean('LED', 'led_invert')
 
-# Define functions which animate LEDs in various ways.
+##################################################################################################
+#LED functions
+##################################################################################################
 def theaterChase(strip, color, wait_ms=50, iterations=10):
     """Movie theater light style chaser animation."""
     for j in range(iterations):
@@ -49,7 +94,7 @@ def theaterChaseRainbow(strip, wait_ms=50, iterations=1):
         theaterChase(strip, wheel(j), wait_ms, iterations)
 
 def ledWorker(strip):
-    while True:
+    while not stop:
         try:
             if LED_pattern == 1:
                 theaterChaseRainbow(strip, wait_ms=40)
@@ -61,6 +106,7 @@ def ledWorker(strip):
             colorWipe(strip, Color(0, 0, 0),0)
 
 ###############################################################################
+#Controller Functions
 ###############################################################################
 def setup_valves(io_board):
     io_board[0].gpio = [0x00]
@@ -92,11 +138,11 @@ def activate_valve(valve, io_board, time_ms=0, on=True):
     if valve >0 and valve <=8:
         pin = valve-1
         if on:
-            io_board[0].output(pin,c.ON)
+            io_board[0].output(pin,ON)
         if time_ms > 0:
             time.sleep(time_ms/1000.0)
         if (not on) or time_ms > 0:
-            io_board[0].output(pin,c.OFF)
+            io_board[0].output(pin,OFF)
     elif valve >8 and valve <=16:
         pin = valve-9
         if on:
@@ -104,23 +150,23 @@ def activate_valve(valve, io_board, time_ms=0, on=True):
         if time_ms > 0:
             time.sleep(time_ms/1000.0)
         if (not on) or time_ms > 0:
-            io_board[1].output(pin,c.OFF)
+            io_board[1].output(pin,OFF)
     elif valve >16 and valve <=24:
         pin = valve-17
         if on:
-            io_board[2].output(pin,c.ON)
+            io_board[2].output(pin,ON)
         if time_ms > 0:
             time.sleep(time_ms/1000.0)
         if (not on) or time_ms > 0:
-            io_board[2].output(pin,c.OFF)
+            io_board[2].output(pin,OFF)
     elif valve >24 and valve <=32:
         pin = valve-25
         if on:
-            io_board[3].output(pin,c.ON)
+            io_board[3].output(pin,ON)
         if time_ms > 0:
             time.sleep(time_ms/1000.0)
         if (not on) or time_ms > 0:
-            io_board[3].output(pin,c.OFF)
+            io_board[3].output(pin,OFF)
 
 def testValves (io_board, time_ms):
     for i in range(1, 32):
@@ -130,32 +176,32 @@ def testValves (io_board, time_ms):
 def vac_onoff(io_board, vac_source="CHAMBER", on=False):
     if on:
         if vac_source == "CHAMBER":
-            activate_valve(io_board=io_board, valve=c.PUMP_OUTPUT)
-            activate_valve(io_board=io_board, valve=c.VAC_SOURCE_CHAMBER_VALVE)
-            activate_valve(io_board=io_board, valve=c.VAC_SOURCE_DRAIN_VALVE, on=False)
+            activate_valve(io_board=io_board, valve=PUMP_OUTPUT)
+            activate_valve(io_board=io_board, valve=VAC_SOURCE_CHAMBER_VALVE)
+            activate_valve(io_board=io_board, valve=VAC_SOURCE_DRAIN_VALVE, on=False)
         elif vac_source == "DRAIN":
-            activate_valve(io_board=io_board, valve=c.PUMP_OUTPUT)
-            activate_valve(io_board=io_board, valve=c.VAC_SOURCE_CHAMBER_VALVE, on=False)
-            activate_valve(io_board=io_board, valve=c.VAC_SOURCE_DRAIN_VALVE)
+            activate_valve(io_board=io_board, valve=PUMP_OUTPUT)
+            activate_valve(io_board=io_board, valve=VAC_SOURCE_CHAMBER_VALVE, on=False)
+            activate_valve(io_board=io_board, valve=VAC_SOURCE_DRAIN_VALVE)
         else:
-            activate_valve(io_board=io_board, valve=c.PUMP_OUTPUT, on=False)
-            activate_valve(io_board=io_board, valve=c.VAC_SOURCE_CHAMBER_VALVE, on=False)
-            activate_valve(io_board=io_board, valve=c.VAC_SOURCE_DRAIN_VALVE, on=False)
+            activate_valve(io_board=io_board, valve=PUMP_OUTPUT, on=False)
+            activate_valve(io_board=io_board, valve=VAC_SOURCE_CHAMBER_VALVE, on=False)
+            activate_valve(io_board=io_board, valve=VAC_SOURCE_DRAIN_VALVE, on=False)
     else:
-        activate_valve(io_board=io_board, valve=c.PUMP_OUTPUT, on=False)
-        activate_valve(io_board=io_board, valve=c.VAC_SOURCE_CHAMBER_VALVE, on=False)
-        activate_valve(io_board=io_board, valve=c.VAC_SOURCE_DRAIN_VALVE, on=False)
+        activate_valve(io_board=io_board, valve=PUMP_OUTPUT, on=False)
+        activate_valve(io_board=io_board, valve=VAC_SOURCE_CHAMBER_VALVE, on=False)
+        activate_valve(io_board=io_board, valve=VAC_SOURCE_DRAIN_VALVE, on=False)
 
 def bubbles_onoff(io_board, on=False):
     global led_pattern
     if on:
         led_pattern = 1
-        activate_valve(io_board=io_board, valve=c.AIR_PURGE_VALVE)
+        activate_valve(io_board=io_board, valve=AIR_PURGE_VALVE)
         vac_onoff(io_board=io_board, vac_source="CHAMBER", on=True)
     else:
         led_pattern = 0
         vac_onoff(io_board=io_board)
-        activate_valve(io_board=io_board, valve=c.AIR_PURGE_VALVE, on=False)
+        activate_valve(io_board=io_board, valve=AIR_PURGE_VALVE, on=False)
 
 def dispense_pressurized_ingredients(io_board, recipe_j, conn):
     total_time = 0
@@ -163,12 +209,12 @@ def dispense_pressurized_ingredients(io_board, recipe_j, conn):
         ingredient = recipe_j['recipe'][i]['ingredient']
         if ingredients[ingredient]['pressurized'] == True:
             amount = recipe_j['recipe'][i]['amount']
-            time_ms=amount*c.FLOW_FACTOR_MS_OZ_PRESSURIZED
+            time_ms=amount*FLOW_FACTOR_MS_OZ_PRESSURIZED
             total_time = time_ms + total_time
             length = len(ingredient)
             conn.sendall(str(length+14) + ' Dispensing ' + ingredient)
             activate_valve(io_board=io_board, valve=ingredients[ingredient]['valve'], time_ms=time_ms)
-            update_amount(recipe_j, conn, c.STATION_ID, ingredient)
+            update_amount(recipe_j, conn, STATION_ID, ingredient)
     return total_time
 
 def dispense_vacuum_ingredients(io_board, recipe_j, conn):
@@ -177,12 +223,12 @@ def dispense_vacuum_ingredients(io_board, recipe_j, conn):
         ingredient = recipe_j['recipe'][i]['ingredient']
         if ingredients[ingredient]['pressurized'] == False:
             amount = recipe_j['recipe'][i]['amount']
-            time_ms=amount*c.FLOW_FACTOR_MS_OZ_UNPRESSURIZED
+            time_ms=amount*FLOW_FACTOR_MS_OZ_UNPRESSURIZED
             total_time = time_ms + total_time
             length = len(ingredient)
             conn.sendall(str(length+14) + ' Dispensing ' + ingredient)
-            activate_valve(io_board=io_board, valve=ingredients[ingredient]['valve'], time_ms=time_ms + c.TRAVEL_TIME_MS)
-            update_amount(recipe_j, conn, c.STATION_ID, ingredient)
+            activate_valve(io_board=io_board, valve=ingredients[ingredient]['valve'], time_ms=time_ms + TRAVEL_TIME_MS)
+            update_amount(recipe_j, conn, STATION_ID, ingredient)
     return total_time
 
 def check_amounts(recipe_j, conn):
@@ -203,7 +249,7 @@ def check_amounts(recipe_j, conn):
             if amount > amount_left:
                 conn.sendall(str(length+15) + ' Not enough ' + ingredient + '!')
                 amounts_ok = False
-    if totalamount > c.MAX_DRINK_SIZE:
+    if totalamount > MAX_DRINK_SIZE:
         conn.sendall('35 Recipe size exceeds max allowed!')
         amounts_ok = False
     return amounts_ok
@@ -214,44 +260,44 @@ def update_amount(recipe_j, conn, stationID, ingredient):
             amount = recipe_j['recipe'][i]['amount']
             ingredients[ingredient]['amount'] = ingredients[ingredient]['amount'] - amount
             try:
-                h = httplib.HTTPConnection(c.API_HOST)
+                h = httplib.HTTPConnection(API_HOST)
                 data = urllib.urlencode(ingredients[ingredient])
-                u = urllib2.urlopen(c.BASE_API_HOST_URL + c.STATIONPOST_URL + stationID, data)
-                h.request('POST', c.BASE_API_HOST_URL + c.STATIONPOST_URL + stationID, data)
+                u = urllib2.urlopen(BASE_API_HOST_URL + STATIONPOST_URL + stationID, data)
+                h.request('POST', BASE_API_HOST_URL + STATIONPOST_URL + stationID, data)
             except:
                 print >> sys.stderr, '[ERROR] Could Not Update Remote Ingredient Data'
 
 def drain_drink(io_board, conn, time_ms):
-    activate_valve(io_board=io_board, valve=c.PRESSURE_RELEASE_VALVE)
-    activate_valve(io_board=io_board, valve=c.DRAIN_VALVE)
+    activate_valve(io_board=io_board, valve=PRESSURE_RELEASE_VALVE)
+    activate_valve(io_board=io_board, valve=DRAIN_VALVE)
     time.sleep(time_ms/1000.0)
-    activate_valve(io_board=io_board, valve=c.DRAIN_VALVE, on=False)
-    activate_valve(io_board=io_board, valve=c.PRESSURE_RELEASE_VALVE, on=False)
+    activate_valve(io_board=io_board, valve=DRAIN_VALVE, on=False)
+    activate_valve(io_board=io_board, valve=PRESSURE_RELEASE_VALVE, on=False)
 
 def fill_rinse(io_board, conn):
     global led_pattern
     led_pattern = 1
     vac_onoff(io_board=io_board, vac_source="CHAMBER", on=True)
-    activate_valve(io_board=io_board, valve=c.RINSE_TANK_VALVE, time_ms=c.RINSE_FILL_TIME_MS)
+    activate_valve(io_board=io_board, valve=RINSE_TANK_VALVE, time_ms=RINSE_FILL_TIME_MS)
     #PURGE INGREDIENTS SUPPLY LINE
-    activate_valve(io_board=io_board, valve=c.AIR_PURGE_VALVE, time_ms=c.LINE_PURGE_TIME_MS)
+    activate_valve(io_board=io_board, valve=AIR_PURGE_VALVE, time_ms=LINE_PURGE_TIME_MS)
     vac_onoff(io_board=io_board)
     LED_pattern = 0
 
 def drain_rinse(io_board, conn):
     global led_pattern
     led_pattern = 1
-    activate_valve(io_board=io_board, valve=c.PRESSURE_RELEASE_VALVE)
+    activate_valve(io_board=io_board, valve=PRESSURE_RELEASE_VALVE)
     vac_onoff(io_board=io_board, vac_source="DRAIN", on=True)
-    time.sleep(c.RINSE_DRAIN_TIME_MS/1000.0)
+    time.sleep(RINSE_DRAIN_TIME_MS/1000.0)
     vac_onoff(io_board=io_board)
-    activate_valve(io_board=io_board, valve=c.PRESSURE_RELEASE_VALVE, on=False)
+    activate_valve(io_board=io_board, valve=PRESSURE_RELEASE_VALVE, on=False)
     led_pattern = 0
 
 def makedrink(io_board, recipe_j, conn):
     global led_pattern
     try:
-        pull_station_data(c.STATION_ID)
+        pull_station_data(STATION_ID)
     except:
         print >> sys.stderr, '[ERROR] Could Not Retrieve Station Data'
         conn.sendall("34 Could Not Retrieve Station Data")
@@ -262,9 +308,9 @@ def makedrink(io_board, recipe_j, conn):
         vac_onoff(io_board=io_board, vac_source="CHAMBER", on=True)
         time2 = dispense_vacuum_ingredients(io_board, recipe_j, conn)
         #PURGE INGREDIENTS SUPPLY LINE
-        activate_valve(io_board=io_board, valve=c.AIR_PURGE_VALVE, time_ms=c.LINE_PURGE_TIME_MS)
+        activate_valve(io_board=io_board, valve=AIR_PURGE_VALVE, time_ms=LINE_PURGE_TIME_MS)
         vac_onoff(io_board)
-        drain_time = time1*c.PRESSURED_DRAIN_TIME_MULT + time2*c.UNPRESSURED_DRAIN_TIME_MULT + c.DRAIN_TIME_ADDON_MS
+        drain_time = time1*PRESSURED_DRAIN_TIME_MULT + time2*UNPRESSURED_DRAIN_TIME_MULT + DRAIN_TIME_ADDON_MS
         drain_drink(io_board, conn, drain_time)
         led_pattern = 0
         return '07 DONE'
@@ -272,7 +318,7 @@ def makedrink(io_board, recipe_j, conn):
         return '08 ERROR'
 
 def pull_station_data(stationID):
-    req = urllib2.Request(c.BASE_API_HOST_URL + c.STATIONQUERY_URL + stationID)
+    req = urllib2.Request(BASE_API_HOST_URL + STATIONQUERY_URL + stationID)
     response = urllib2.urlopen(req)
     station_j = json.load(response)
     for i in range(0, len(station_j['ingredients'])):
@@ -281,9 +327,13 @@ def pull_station_data(stationID):
             ingredients[ingredient] = station_j['ingredients'][i]
 
 def reset(io_board):
+    global lock
+    global LED_pattern
+    lock = False
+    LED_pattern = 0
     setup_valves(io_board)
     try:
-        pull_station_data(c.STATION_ID)
+        pull_station_data(STATION_ID)
     except:
         print >> sys.stderr, '[ERROR] Could Not Retrieve Station Data'
 
@@ -294,7 +344,7 @@ def parse_cmd(cmd, data, conn, io_board):
         return '07 DONE'
     elif cmd == '01': #Make Recipe with ID (data)
         conn.sendall("22 Received Command " + cmd)
-        req = urllib2.Request(c.BASE_API_HOST_URL+ c.RECIPE_URL + data)
+        req = urllib2.Request(BASE_API_HOST_URL+ RECIPE_URL + data)
         url_response = urllib2.urlopen(req)
         recipe_j = json.load(url_response)
         print 'Drink Ordered: ' + recipe_j['name']
@@ -322,48 +372,78 @@ def parse_cmd(cmd, data, conn, io_board):
         global led_pattern
         led_pattern = int(data)
         return '07 DONE'
-    elif cmd == '06': #Fill Rinse
+    elif cmd == '06': #Set Station ID
+        conn.sendall("22 Received Command " + cmd)
+        cfgfile = open('config.ini','w')
+        parser.set('API', 'station_id', data)
+        parser.write(cfgfile)
+        cfgfile.close()
+        return '07 DONE'
+    elif cmd == '07': #Fill Full Rinse
         conn.sendall("22 Received Command " + cmd)
         fill_rinse(io_board, conn)
         return '07 DONE'
-    elif cmd == '07': #Drain Rinse
+    elif cmd == '08': #Drain Full Rinse
         conn.sendall("22 Received Command " + cmd)
         drain_rinse(io_board, conn)
         return '07 DONE'
-    elif cmd == '08': #Activate Vacuum (BUBBLES/PURGE)
+    elif cmd == '09': #Activate Vacuum (BUBBLES/PURGE)
         conn.sendall("22 Received Command " + cmd)
         bubbles_onoff(io_board, on=True)
         return '07 DONE'
-    elif cmd == '09': #Turn off Vacuum (BUBBLES/PURGE)
+    elif cmd == '10': #Turn off Vacuum (BUBBLES/PURGE)
         conn.sendall("22 Received Command " + cmd)
         bubbles_onoff(io_board, on=False)
         return '07 DONE'
-    elif cmd == '10': #Pull Station Data from Database
+    elif cmd == '11': #Pull Station Data from Database
         conn.sendall("22 Received Command " + cmd)
         pull_station_data(STATION_ID)
         return '07 DONE'
-    elif cmd == '11': #Return Controller state
-        conn.sendall("22 Received Command " + cmd)
-
-        #add functionality to return valve states? or mode?
-
-        return '07 DONE'
     elif cmd == '12': #Test Valves/Outputs
         conn.sendall("22 Received Command " + cmd)
-        testValves(io_board, c.VALVE_TEST_INTERVAL_MS)
+        testValves(io_board, VALVE_TEST_INTERVAL_MS)
         return '07 DONE'
     else:
         conn.sendall("22 Received Command " + cmd)
         print >> sys.stderr, 'Unable To Parse Command'
         return '08 ERROR'
 
+def connectionWorker(conn):
+    global lock
+    lock = True
+    data = ''
+    try:
+        cmd = conn.recv(2)
+        print 'Received Command: "%s"' % cmd
+        if int(cmd) >= 1 and int(cmd) <= 6:
+            data = conn.recv(33)
+            data = data[1:33]
+            print 'Received Data: "%s"' % data
+        response = parse_cmd(cmd, data, conn, io_board)
+        if response:
+            conn.sendall(response)
+            print response
+    except:
+        conn.sendall('08 ERROR')
+        print 'ERROR'
+        raise
+    else:
+        conn.close()
+    finally:
+        lock = False
+        threads.remove(threading.current_thread())
 
+###############################################################################
+#Main Program
+###############################################################################
 #GLOBAL DATA
-LED_pattern = 0
+stop = False        #Flag to stop threads
+lock = False        #Lock to decline further connections during a processing job
+LED_pattern = 0     #Current Pattern For LEDs
 station_j = {}      #Python object of retrieved station JSON data
-ingredients = {}    #Python object of ingredients part of station JSON data
-                    #    to reference by ingredient for matching to recipe_j, & updating amounts
-
+ingredients = {}    #Array of ingredient objects from station JSON data referenced by ingredient
+                    #to reference by ingredient for matching to recipe_j, & updating amounts
+threads = []
 
 if __name__ == '__main__':
     address = 0x20
@@ -378,52 +458,48 @@ if __name__ == '__main__':
         print >> sys.stderr, '[ERROR] Could Not Setup IO Board'
     try:
         # Create NeoPixel object with appropriate configuration.
-        strip = Adafruit_NeoPixel(c.LED_COUNT, c.LED_PIN, c.LED_FREQ_HZ, c.LED_DMA, c.LED_INVERT, c.LED_BRIGHTNESS)
+        strip = Adafruit_NeoPixel(LED_COUNT, LED_PIN, LED_FREQ_HZ, LED_DMA, LED_INVERT, LED_BRIGHTNESS)
         # Intialize the library (must be called once before other functions).
         strip.begin()
-        ledThread = thread.start_new_thread(ledWorker,(strip,))
+        ledThread = threading.Thread(target=ledWorker, args=(strip,))
+        threads.append(ledThread)
+        ledThread.start()
     except:
         print >> sys.stderr, '[ERROR] Could Not Setup LED thread'
     try:
-        pull_station_data(c.STATION_ID)
+        STATION_ID = parser.get('API', 'station_id')
+        if STATION_ID == "": raise
     except:
-        print >> sys.stderr, '[ERROR] Could Not Retrieve Station Data'
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    print >> sys.stderr, 'Starting Socket Server at ' + c.BIND_IP + ':' + str(c.BIND_PORT)
+        print >> sys.stderr, '[ERROR] Station ID is not set. Please set using GUI Interface'
     try:
-        s.bind((c.BIND_IP,c.BIND_PORT))
+        pull_station_data(STATION_ID)
+    except:
+        print >> sys.stderr, '[ERROR] Unable to pull station data'
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    print >> sys.stderr, 'Starting Socket Server at ' + BIND_IP + ':' + str(BIND_PORT)
+    try:
+        s.bind((BIND_IP,BIND_PORT))
     except socket.error as msg:
         print >> sys.stderr, '[ERROR] Bind failed. Error Code: ' + str(msg[0]) + ' Message: ' + msg[1]
 
-    s.listen(1)
-    stop = False
+    s.listen(5)
     print ('Press Ctrl-C To Quit')
     while not stop:
         print >> sys.stderr, 'TOB Waiting For Connection'
         try:
             conn, addr = s.accept()
-            data = ''
             print >> sys.stderr, 'TOB Client Connected:', addr
-            try:
-                cmd = conn.recv(2)
-                print 'Received Command: "%s"' % cmd
-                if int(cmd) >= 1 and int(cmd) <= 5:
-                    data = conn.recv(33)
-                    data = data[1:33]
-                    print 'Received Data: "%s"' % data
-                response = parse_cmd(cmd, data, conn, io_board)
-                if response:
-                    conn.sendall(response)
-                    print response
-            except KeyboardInterrupt:
-                raise
-            except:
-                conn.sendall('08 ERROR')
-                print 'ERROR'
-                raise
-            else:
+            if lock:
+                conn.sendall('07 BUSY')
                 conn.close()
+            else:
+                connectionThread = threading.Thread(target=connectionWorker, args=(conn,))
+                threads.append(connectionThread)
+                connectionThread.start()
         except KeyboardInterrupt:
             stop = True
+    s.close()
+    for thread in threads:
+        thread.join()
     print '\r\nGoodbye!\r\n'
     s.close()
