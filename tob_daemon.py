@@ -193,13 +193,13 @@ def vac_onoff(io_board, vac_source="CHAMBER", on=False):
         activate_valve(io_board=io_board, valve=VAC_SOURCE_DRAIN_VALVE, on=False)
 
 def bubbles_onoff(io_board, on=False):
-    global led_pattern
+    global LED_pattern
     if on:
-        led_pattern = 1
+        LED_pattern = 1
         activate_valve(io_board=io_board, valve=AIR_PURGE_VALVE)
         vac_onoff(io_board=io_board, vac_source="CHAMBER", on=True)
     else:
-        led_pattern = 0
+        LED_pattern = 0
         vac_onoff(io_board=io_board)
         activate_valve(io_board=io_board, valve=AIR_PURGE_VALVE, on=False)
 
@@ -256,7 +256,7 @@ def check_amounts(recipe_j, conn):
 
 def update_amount(recipe_j, conn, stationID, ingredient):
     for i in range(0, len(recipe_j['recipe'])):
-        if recipe_j['recipe'][i] == ingredient:
+        if recipe_j['recipe'][i]['ingredient'] == ingredient:
             amount = recipe_j['recipe'][i]['amount']
             ingredients[ingredient]['amount'] = ingredients[ingredient]['amount'] - amount
             try:
@@ -268,6 +268,7 @@ def update_amount(recipe_j, conn, stationID, ingredient):
                 print >> sys.stderr, '[ERROR] Could Not Update Remote Ingredient Data'
 
 def drain_drink(io_board, conn, time_ms):
+    conn.sendall('16 Pouring Drink')
     activate_valve(io_board=io_board, valve=PRESSURE_RELEASE_VALVE)
     activate_valve(io_board=io_board, valve=DRAIN_VALVE)
     time.sleep(time_ms/1000.0)
@@ -275,8 +276,8 @@ def drain_drink(io_board, conn, time_ms):
     activate_valve(io_board=io_board, valve=PRESSURE_RELEASE_VALVE, on=False)
 
 def fill_rinse(io_board, conn):
-    global led_pattern
-    led_pattern = 1
+    global LED_pattern
+    LED_pattern = 1
     vac_onoff(io_board=io_board, vac_source="CHAMBER", on=True)
     activate_valve(io_board=io_board, valve=RINSE_TANK_VALVE, time_ms=RINSE_FILL_TIME_MS)
     #PURGE INGREDIENTS SUPPLY LINE
@@ -285,17 +286,17 @@ def fill_rinse(io_board, conn):
     LED_pattern = 0
 
 def drain_rinse(io_board, conn):
-    global led_pattern
-    led_pattern = 1
+    global LED_pattern
+    LED_pattern = 1
     activate_valve(io_board=io_board, valve=PRESSURE_RELEASE_VALVE)
     vac_onoff(io_board=io_board, vac_source="DRAIN", on=True)
     time.sleep(RINSE_DRAIN_TIME_MS/1000.0)
     vac_onoff(io_board=io_board)
     activate_valve(io_board=io_board, valve=PRESSURE_RELEASE_VALVE, on=False)
-    led_pattern = 0
+    LED_pattern = 0
 
 def makedrink(io_board, recipe_j, conn):
-    global led_pattern
+    global LED_pattern
     try:
         pull_station_data(STATION_ID)
     except:
@@ -312,7 +313,7 @@ def makedrink(io_board, recipe_j, conn):
         vac_onoff(io_board)
         drain_time = time1*PRESSURED_DRAIN_TIME_MULT + time2*UNPRESSURED_DRAIN_TIME_MULT + DRAIN_TIME_ADDON_MS
         drain_drink(io_board, conn, drain_time)
-        led_pattern = 0
+        LED_pattern = 0
         return '07 DONE'
     else:
         return '08 ERROR'
@@ -369,8 +370,8 @@ def parse_cmd(cmd, data, conn, io_board):
         return '07 DONE'
     elif cmd == '05': #Test led pattern
         conn.sendall("22 Received Command " + cmd)
-        global led_pattern
-        led_pattern = int(data)
+        global LED_pattern
+        LED_pattern = int(data)
         return '07 DONE'
     elif cmd == '06': #Set Station ID
         conn.sendall("22 Received Command " + cmd)
@@ -437,6 +438,7 @@ def connectionWorker(conn):
 #Main Program
 ###############################################################################
 #GLOBAL DATA
+io_board = {}
 stop = False        #Flag to stop threads
 lock = False        #Lock to decline further connections during a processing job
 LED_pattern = 0     #Current Pattern For LEDs
@@ -447,7 +449,6 @@ threads = []
 
 if __name__ == '__main__':
     address = 0x20
-    io_board = {}
     try:
         io_board[0] = MCP230xx.MCP23008(address)
         io_board[1] = MCP230xx.MCP23008((address+0x1))
