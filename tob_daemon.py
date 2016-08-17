@@ -8,7 +8,6 @@ import urllib2
 import json
 import thread
 import threading
-import httplib
 import ConfigParser
 
 from Adafruit_GPIO import MCP230xx
@@ -21,7 +20,6 @@ parser = ConfigParser.SafeConfigParser()
 parser.read('config.ini')
 BIND_IP = parser.get('SocketBindings', 'host')
 BIND_PORT = parser.getint('SocketBindings', 'port')
-API_HOST = parser.get('API', 'api_host')
 BASE_API_HOST_URL = parser.get('API', 'base_url')
 RECIPE_URL = parser.get('API', 'recipe_route')
 USERQUERY_URL = parser.get('API', 'user_route')
@@ -260,10 +258,8 @@ def update_amount(recipe_j, conn, stationID, ingredient):
             amount = recipe_j['recipe'][i]['amount']
             ingredients[ingredient]['amount'] = ingredients[ingredient]['amount'] - amount
             try:
-                h = httplib.HTTPConnection(API_HOST)
                 data = urllib.urlencode(ingredients[ingredient])
                 u = urllib2.urlopen(BASE_API_HOST_URL + STATIONPOST_URL + stationID, data)
-                h.request('POST', BASE_API_HOST_URL + STATIONPOST_URL + stationID, data)
             except:
                 print >> sys.stderr, '[ERROR] Could Not Update Remote Ingredient Data'
 
@@ -499,8 +495,7 @@ if __name__ == '__main__':
                 connectionThread.start()
         except KeyboardInterrupt:
             stop = True
-    s.close()
     for thread in threads:
         thread.join()
-    print '\r\nGoodbye!\r\n'
     s.close()
+    print '\r\nGoodbye!\r\n'
