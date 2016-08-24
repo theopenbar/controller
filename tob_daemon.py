@@ -194,12 +194,19 @@ def pumpOnOff(io_board, mode="VACUUM", on=False):
             activateOutput(io_board=io_board, output=VAC_BYPASS_VALVE, on=False)
 
     else:
+        #shutoff pump
         activateOutput(io_board=io_board, output=PUMP_OUTPUT, on=False)
+        #relieve pressure in chamber
+        activateOutput(io_board=io_board, output=PRESSURIZE_VALVE)
+        activateOutput(io_board=io_board, output=PRESSURE_BYPASS_VALVE)
+        activateOutput(io_board=io_board, output=VACUUM_VALVE)
+        activateOutput(io_board=io_board, output=VAC_BYPASS_VALVE)
+        time.sleep(1)
+        #now close valves
         activateOutput(io_board=io_board, output=PRESSURIZE_VALVE, on=False)
         activateOutput(io_board=io_board, output=PRESSURE_BYPASS_VALVE, on=False)
         activateOutput(io_board=io_board, output=VACUUM_VALVE, on=False)
         activateOutput(io_board=io_board, output=VAC_BYPASS_VALVE, on=False)
-
 
 def bubblesOnOff(io_board, on=False):
     global LED_pattern
@@ -274,15 +281,7 @@ def updateAmount(recipe_j, conn, stationID, ingredient):
             except:
                 print >> sys.stderr, '[ERROR] Could Not Update Remote Ingredient Data'
 
-def drainDrink(io_board, conn, time_ms):
-    conn.sendall('16 Pouring Drink')
-    pumpOnOff(io_board=io_board, mode="PRESSURIZE")
-    activateOutput(io_board=io_board, output=DRAIN_VALVE)
-    time.sleep(time_ms/1000.0)
-    activateOutput(io_board=io_board, output=DRAIN_VALVE, on=False)
-    pumpOnOff(io_board=io_board, mode="PRESSURIZE", on=False)
-
-def fillRinse(io_board, conn):
+def fillRinse(io_board):
     global LED_pattern
     LED_pattern = 1
     pumpOnOff(io_board=io_board, mode="VACUUM", on=True)
@@ -292,7 +291,7 @@ def fillRinse(io_board, conn):
     pumpOnOff(io_board=io_board)
     LED_pattern = 0
 
-def drainRinse(io_board, conn):
+def drainRinse(io_board):
     global LED_pattern
     LED_pattern = 1
     activateOutput(io_board=io_board, output=RINSE_TANK_VALVE)
@@ -321,9 +320,14 @@ def makeDrink(io_board, recipe_j, conn):
         time2 = dispenseVacuumIngredients(io_board, recipe_j, conn)
         #PURGE INGREDIENTS SUPPLY LINE
         activateOutput(io_board=io_board, output=AIR_PURGE_VALVE, time_ms=LINE_PURGE_TIME_MS)
-        pumpOnOff(io_board)
+        #DRAIN DRINK
+        conn.sendall('16 Pouring Drink')
         drain_time = time1*PRESSURED_DRAIN_TIME_MULT + time2*UNPRESSURED_DRAIN_TIME_MULT + DRAIN_TIME_ADDON_MS
-        drainDrink(io_board, conn, drain_time)
+        pumpOnOff(io_board=io_board, mode="PRESSURIZE", on=True)
+        activateOutput(io_board=io_board, output=DRAIN_VALVE)
+        time.sleep(drain_time/1000.0)
+        activateOutput(io_board=io_board, output=DRAIN_VALVE, on=False)
+        pumpOnOff(io_board)
         LED_pattern = 0
         return '07 DONE'
     else:
@@ -389,11 +393,11 @@ def parseCmd(cmd, data, conn, io_board):
         return '07 DONE'
     elif cmd == '07': #Fill Full Rinse
         conn.sendall("22 Received Command " + cmd)
-        fillRinse(io_board, conn)
+        fillRinse(io_board)
         return '07 DONE'
     elif cmd == '08': #Drain Full Rinse
         conn.sendall("22 Received Command " + cmd)
-        drainRinse(io_board, conn)
+        drainRinse(io_board)
         return '07 DONE'
     elif cmd == '09': #Activate Vacuum (BUBBLES/PURGE)
         conn.sendall("22 Received Command " + cmd)
@@ -413,7 +417,7 @@ def parseCmd(cmd, data, conn, io_board):
         return '07 DONE'
     else:
         conn.sendall("22 Received Command " + cmd)
-        print >> sys.stderr, '[ERROR] Unable To Parse Command'
+        print >> sys.stderr, '[ERROR] Invalid Command'
         return '08 ERROR'
 
 def connectionWorker(conn):
@@ -434,12 +438,11 @@ def connectionWorker(conn):
     except KeyboardInterrupt:
         conn.sendall('08 ERROR')
         raise
-    except:
+    except Exception as e:
         conn.sendall('08 ERROR')
-        print >> sys.stderr, '[ERROR] Connection Worker Parsing Command'
-    else:
-        conn.close()
+        print >> sys.stderr, '[ERROR] In connectionWorker:' + str(e)
     finally:
+        conn.close()
         lock = False
         threads.remove(threading.current_thread())
 
@@ -476,15 +479,14 @@ if __name__ == '__main__':
         ledThread.start()
     except:
         print >> sys.stderr, '[ERROR] Could Not Setup LED thread'
+    print >> sys.stderr, 'Attempting To Pull Station Data from ' + BASE_API_HOST_URL + STATIONQUERY_URL
     try:
         STATION_ID = parser.get('API', 'station_id')
-        STATION_AUTH = parser.get('API', 'staion_auth')
-        if STATION_ID == "": raise NoID
-        if STATION_AUTH == "": raise NoAuth
-    except NoID:
-        print >> sys.stderr, '[ERROR] Station ID is not set. Please set using GUI Interface'
-    except NoAUTH:
-        pass
+        STATION_AUTH = parser.get('API', 'station_auth')
+        if STATION_ID == "": raise Exception("No Station ID configured. Please set using GUI")
+        if STATION_AUTH == "": raise Exception("No Station Authorization configured. Please set using GUI")
+    except Exception as e:
+        print >> sys.stderr, '[WARNING] ' + e[0]
     try:
         pullStationData(STATION_ID)
     except:
