@@ -1,5 +1,4 @@
-#Python Server Daomon to run The Open Bar Control Board and Neo Pixel
-
+#Python Server Daomon to run The Open Bar Control Board and a Neo Pixel
 import sys
 import socket
 import time
@@ -9,41 +8,38 @@ import json
 import thread
 import threading
 import ConfigParser
+import RPi.GPIO as GPIO
 
 from Adafruit_GPIO import MCP230xx
 from neopixel import *
 
 ##################################################################################################
-#Configuration Parameteres
+#Retrieve Configuration Parameters
 ##################################################################################################
 parser = ConfigParser.SafeConfigParser()
-parser.read('config.ini')
+parser.read('/home/pi/controller/config.ini')
 BIND_IP = parser.get('SocketBindings', 'host')
 BIND_PORT = parser.getint('SocketBindings', 'port')
 BASE_API_HOST_URL = parser.get('API', 'base_url')
 RECIPE_URL = parser.get('API', 'recipe_route')
-USERQUERY_URL = parser.get('API', 'user_route')
 STATIONQUERY_URL = parser.get('API', 'station_route')
-STATIONPOST_URL = parser.get('API', 'ingredient_route')
+LIQUIDPOST_URL = parser.get('API', 'liquid_route')
 STATION_ID = "" #set in main
 STATION_AUTH = "" #set in main
 FLOW_FACTOR_MS_OZ_UNPRESSURIZED = parser.getint('StationCalibration', 'flow_factor_ms_oz_unpressurized')
 FLOW_FACTOR_MS_OZ_PRESSURIZED = parser.getint('StationCalibration', 'flow_factor_ms_oz_pressurized')
 TRAVEL_TIME_MS = parser.getint('StationCalibration', 'travel_time_ms')
-RINSE_FILL_TIME_MS = parser.getint('StationCalibration', 'full_rinse_fill_time_ms')
-RINSE_DRAIN_TIME_MS = parser.getint('StationCalibration', 'full_rinse_drain_time_ms')
+RINSE_FILL_TIME_MS = parser.getint('StationCalibration', 'rinse_fill_time_ms')
 LINE_PURGE_TIME_MS = parser.getint('StationCalibration', 'line_purge_time_ms')
 VALVE_TEST_INTERVAL_MS = parser.getint('StationCalibration', 'valve_test_interval_ms')
-PRESSURED_DRAIN_TIME_MULT = parser.getint('StationCalibration', 'pressured_drain_time_mult')
-UNPRESSURED_DRAIN_TIME_MULT = parser.getint('StationCalibration', 'unpressured_drain_time_mult')
-DRAIN_TIME_ADDON_MS = parser.getint('StationCalibration', 'drain_time_addon_ms')
+CHAMBER_FALL_TIME_MS = parser.getint('StationCalibration', 'chamber_fall_time_ms')
+PUMP_TIMEOUT_MS = parser.getint('StationCalibration', 'pump_timeout_ms')
+PUMP_EXTRA_MS = parser.getint('StationCalibration', 'pump_extra_ms')
 MAX_DRINK_SIZE = parser.getint('StationCalibration', 'max_drink_size_oz')
+PUMP_SWITCH_GPIO = parser.getint('OutputMapping', 'pump_switch_gpio')
 PUMP_OUTPUT = parser.getint('OutputMapping', 'pump_output')
 PRESSURE_BYPASS_VALVE = parser.getint('OutputMapping', 'pressure_bypass_valve')
 PRESSURIZE_VALVE = parser.getint('OutputMapping', 'pressurize_valve')
-VAC_BYPASS_VALVE = parser.getint('OutputMapping', 'vac_bypass_valve')
-VACUUM_VALVE = parser.getint('OutputMapping', 'vacuum_valve')
-DRAIN_VALVE = parser.getint('OutputMapping', 'drain_valve')
 RINSE_TANK_VALVE = parser.getint('OutputMapping', 'rinse_tank_valve')
 AIR_PURGE_VALVE = parser.getint('OutputMapping', 'air_purge_valve')
 ON = parser.getint('OutputMapping', 'on')
@@ -132,6 +128,8 @@ def setupOutputs(io_board):
     io_board[1].write_iodir()
     io_board[2].write_iodir()
     io_board[3].write_iodir()
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(4, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
 def activateOutput(output, io_board, time_ms=0, on=True):
     if output >0 and output <=8:
@@ -178,169 +176,201 @@ def pumpOnOff(io_board, mode="VACUUM", on=False):
             activateOutput(io_board=io_board, output=PUMP_OUTPUT)
             activateOutput(io_board=io_board, output=PRESSURIZE_VALVE)
             activateOutput(io_board=io_board, output=PRESSURE_BYPASS_VALVE, on=False)
-            activateOutput(io_board=io_board, output=VACUUM_VALVE, on = False)
-            activateOutput(io_board=io_board, output=VAC_BYPASS_VALVE)
         elif mode == "VACUUM":
             activateOutput(io_board=io_board, output=PUMP_OUTPUT)
             activateOutput(io_board=io_board, output=PRESSURIZE_VALVE, on=False)
             activateOutput(io_board=io_board, output=PRESSURE_BYPASS_VALVE)
-            activateOutput(io_board=io_board, output=VACUUM_VALVE)
-            activateOutput(io_board=io_board, output=VAC_BYPASS_VALVE, on=False)
         else:
+            #incorrect option, do nothing
             activateOutput(io_board=io_board, output=PUMP_OUTPUT, on=False)
             activateOutput(io_board=io_board, output=PRESSURIZE_VALVE, on=False)
             activateOutput(io_board=io_board, output=PRESSURE_BYPASS_VALVE, on=False)
-            activateOutput(io_board=io_board, output=VACUUM_VALVE, on=False)
-            activateOutput(io_board=io_board, output=VAC_BYPASS_VALVE, on=False)
-
     else:
         #shutoff pump
         activateOutput(io_board=io_board, output=PUMP_OUTPUT, on=False)
         #relieve pressure in chamber
         activateOutput(io_board=io_board, output=PRESSURIZE_VALVE)
         activateOutput(io_board=io_board, output=PRESSURE_BYPASS_VALVE)
-        activateOutput(io_board=io_board, output=VACUUM_VALVE)
-        activateOutput(io_board=io_board, output=VAC_BYPASS_VALVE)
-        time.sleep(1)
+        activateOutput(io_board=io_board, output=AIR_PURGE_VALVE)
+        time.sleep(CHAMBER_FALL_TIME_MS/1000.0)
         #now close valves
         activateOutput(io_board=io_board, output=PRESSURIZE_VALVE, on=False)
         activateOutput(io_board=io_board, output=PRESSURE_BYPASS_VALVE, on=False)
-        activateOutput(io_board=io_board, output=VACUUM_VALVE, on=False)
-        activateOutput(io_board=io_board, output=VAC_BYPASS_VALVE, on=False)
-
-def bubblesOnOff(io_board, on=False):
-    global LED_pattern
-    if on:
-        LED_pattern = 1
-        activateOutput(io_board=io_board, output=AIR_PURGE_VALVE)
-        pumpOnOff(io_board=io_board, mode="VACUUM", on=True)
-    else:
-        LED_pattern = 0
-        pumpOnOff(io_board=io_board)
         activateOutput(io_board=io_board, output=AIR_PURGE_VALVE, on=False)
 
 def dispensePressurizedIngredients(io_board, recipe_j, conn):
-    total_time = 0
-    for i in range (0, len(recipe_j['recipe'])):
-        ingredient = recipe_j['recipe'][i]['ingredient']
-        if ingredients[ingredient]['pressurized'] == True:
-            amount = recipe_j['recipe'][i]['amount']
-            time_ms=amount*FLOW_FACTOR_MS_OZ_PRESSURIZED
-            total_time = time_ms + total_time
-            length = len(ingredient)
-            conn.sendall(str(length+14) + ' Dispensing ' + ingredient)
-            activateOutput(io_board=io_board, output=ingredients[ingredient]['valve'], time_ms=time_ms)
-            updateAmount(recipe_j, conn, STATION_ID, ingredient)
-    return total_time
+    for i in range (0, len(recipe_j['liquids'])):
+        liquidId = recipe_j['liquids'][i]['id']['_id']
+        liquidType = recipe_j['liquids'][i]['id']['type']
+        try:
+            if matchedLiquids[liquidId]['pressurized'] == True:
+                amount = recipe_j['liquids'][i]['amount']
+                time_ms=amount*FLOW_FACTOR_MS_OZ_PRESSURIZED
+                length = len(liquidType)
+                conn.sendall(str(length+14) + ' Dispensing ' + liquidType)
+                activateOutput(io_board=io_board, output=matchedLiquids[liquidId]['valve'], time_ms=time_ms)
+                updateAmount(recipe_j, conn, amount, liquidId)
+        except:
+            print >> sys.stderr, '[INFO] Skipping Unmatched Liquid ' + liquidType + ' for Pressurized'
 
 def dispenseVacuumIngredients(io_board, recipe_j, conn):
-    total_time = 0
-    for i in range (0, len(recipe_j['recipe'])):
-        ingredient = recipe_j['recipe'][i]['ingredient']
-        if ingredients[ingredient]['pressurized'] == False:
-            amount = recipe_j['recipe'][i]['amount']
-            time_ms=amount*FLOW_FACTOR_MS_OZ_UNPRESSURIZED
-            total_time = time_ms + total_time
-            length = len(ingredient)
-            conn.sendall(str(length+14) + ' Dispensing ' + ingredient)
-            activateOutput(io_board=io_board, output=ingredients[ingredient]['valve'], time_ms=time_ms + TRAVEL_TIME_MS)
-            updateAmount(recipe_j, conn, STATION_ID, ingredient)
-    return total_time
+    for i in range (0, len(recipe_j['liquids'])):
+        liquidId = recipe_j['liquids'][i]['id']['_id']
+        liquidType = recipe_j['liquids'][i]['id']['type']
+        try:
+            if matchedLiquids[liquidId]['pressurized'] == False:
+                amount = recipe_j['liquids'][i]['amount']
+                time_ms=amount*FLOW_FACTOR_MS_OZ_UNPRESSURIZED
+                length = len(liquidType)
+                conn.sendall(str(length+14) + ' Dispensing ' + liquidType)
+                activateOutput(io_board=io_board, output=matchedLiquids[liquidId]['valve'], time_ms=time_ms + TRAVEL_TIME_MS)
+                updateAmount(recipe_j, conn, amount, liquidId)
+        except:
+            print >> sys.stderr, '[INFO] Skipping Unmatched Liquid ' + liquidType + ' for Vacuum'
 
 def checkAmounts(recipe_j, conn):
     totalamount = 0
     amounts_ok = True
-    for i in range (0, len(recipe_j['recipe'])):
-        ingredient = recipe_j['recipe'][i]['ingredient']
-        amount = recipe_j['recipe'][i]['amount']
-        totalamount = totalamount + amount
-        length = len(ingredient)
+
+    for i in range(0, len(recipe_j['liquids'])):
+        ingredient = recipe_j['liquids'][i]['id']
+        length = len(ingredient['type'])
+        amount = recipe_j['liquids'][i]['amount']
         try:
-            amount_left = ingredients[ingredient]['amount']
-        except:
-            conn.sendall(str(length+36) + ' [ERROR] No ' + ingredient + ' configured in station')
-            print >> sys.stderr, '[ERROR] No ' + ingredient + ' configured in station'
-            amounts_ok = False
-        else:
+            amount_left = matchedLiquids[ingredient['_id']]['amount']
             if amount > amount_left:
-                conn.sendall(str(length+15) + ' Not enough ' + ingredient + '!')
+                conn.sendall(str(length+15) + ' Not enough ' + str(ingredient['type']) + '!')
                 amounts_ok = False
+            else:
+                totalamount = totalamount + amount
+        except:
+            print >> sys.stderr, '[INFO] Skipping Unmatched Liquid ' + ingredient['type'] + ' for Amount Check'
     if totalamount > MAX_DRINK_SIZE:
         conn.sendall('35 Recipe size exceeds max allowed!')
         amounts_ok = False
     return amounts_ok
 
-def updateAmount(recipe_j, conn, stationID, ingredient):
-    for i in range(0, len(recipe_j['recipe'])):
-        if recipe_j['recipe'][i]['ingredient'] == ingredient:
-            amount = recipe_j['recipe'][i]['amount']
-            ingredients[ingredient]['amount'] = ingredients[ingredient]['amount'] - amount
-            try:
-                data = urllib.urlencode(ingredients[ingredient])
-                u = urllib2.urlopen(BASE_API_HOST_URL + STATIONPOST_URL + stationID, data)
-            except:
-                print >> sys.stderr, '[ERROR] Could Not Update Remote Ingredient Data'
+def updateAmount(recipe_j, conn, amount, liquidId):
+    new_amount = matchedLiquids[liquidId]['amount'] - amount
+    body = {'valve':matchedLiquids[liquidId]['valve'], 'amount':new_amount}
+    try:
+        data = urllib.urlencode(body)
+        request = urllib2.Request(BASE_API_HOST_URL + LIQUIDPOST_URL + STATION_ID, data)
+        request.get_method = lambda: 'PUT'
+        u = urllib2.urlopen(request)
+    except:
+        print >> sys.stderr, '[ERROR] Could Not Update Remote Ingredient Data'
 
-def fillRinse(io_board):
-    global LED_pattern
-    LED_pattern = 1
+def rinseCycle(conn, io_board, time_ms):
+    print >> sys.stderr, '[INFO] Beginning Rinse Cycle'
+    conn.sendall("24 Beginning Rinse Cycle")
+    pumpOnOff(io_board=io_board, mode="PRESSURIZE", on=True)
+    #WAIT FOR TOP SWITCH ACTIVATION
+    channel = GPIO.wait_for_edge(PUMP_SWITCH_GPIO, GPIO.FALLING, timeout=PUMP_TIMEOUT_MS)
+    if channel is None:
+        pumpOnOff(io_board=io_board)
+        LED_pattern = 0
+        return '08 ERROR'
+    time.sleep(PUMP_EXTRA_MS/1000.0)
     pumpOnOff(io_board=io_board, mode="VACUUM", on=True)
-    activateOutput(io_board=io_board, output=RINSE_TANK_VALVE, time_ms=RINSE_FILL_TIME_MS)
+    activateOutput(io_board=io_board, output=RINSE_TANK_VALVE, time_ms=time_ms)
     #PURGE INGREDIENTS SUPPLY LINE
     activateOutput(io_board=io_board, output=AIR_PURGE_VALVE, time_ms=LINE_PURGE_TIME_MS)
     pumpOnOff(io_board=io_board)
-    LED_pattern = 0
 
-def drainRinse(io_board):
-    global LED_pattern
-    LED_pattern = 1
-    activateOutput(io_board=io_board, output=RINSE_TANK_VALVE)
-    pumpOnOff(io_board=io_board, mode="PRESSURIZE", on=True)
-    time.sleep(RINSE_DRAIN_TIME_MS/1000.0)
-    pumpOnOff(io_board=io_board)
-    activateOutput(io_board=io_board, output=RINSE_TANK_VALVE, on=False)
-    LED_pattern = 0
+def parseRecipe(recipe_j):
+    global matchedLiquids
+    global garnishes
+    global onHandLiquids
+    matchedLiquids.clear()
+    garnishes = []
+    onHandLiquids.clear()
+
+    for liquid in recipe_j['liquids']:
+        for stationLiquid in station_j['connectedLiquids']:
+            if (stationLiquid['id']['_id'] == liquid['id']['_id']
+                    or stationLiquid['id']['type'] == liquid['id']['type'] and liquid['id']['subtype'] == "*Any"
+                    or stationLiquid['id']['type'] == liquid['id']['type'] and stationLiquid['id']['subtype'] == liquid['id']['subtype'] and liquid['id']['brand'] == "*Any"):
+                matchedLiquids[liquid['id']['_id']] = ({'valve':stationLiquid['valve'],
+                                                        'amount':stationLiquid['amount'],
+                                                        'pressurized':stationLiquid['pressurized'],
+                                                        'id':stationLiquid['id']['_id']})
+            else:
+                for onHandLiquid in station_j['onHandLiquids']:
+                    if (onHandLiquid['_id'] == liquid['id']['_id']
+                            or onHandLiquid['type'] == liquid['id']['type'] and liquid['id']['subtype'] == "*Any"
+                            or onHandLiquid['type'] == liquid['id']['type'] and onHandLiquid['subtype'] == liquid['id']['subtype'] and liquid['id']['brand'] == "*Any"):
+                        onHandLiquids[liquid['id']['_id']] = ({'id':onHandLiquid['_id'],
+                                                                'amount':liquid['amount'],
+                                                                'type':onHandLiquid['type'],
+                                                                'brand':onHandLiquid['brand'],
+                                                                'subtype':onHandLiquid['subtype'],
+                                                                'description':onHandLiquid['description']})
+    garnishes = recipe_j['garnishes']
+
+
 
 def makeDrink(io_board, recipe_j, conn):
     global LED_pattern
     print 'Drink Ordered: ' + recipe_j['name']
-    print 'Ingredients:'
-    for i in range (0, len(recipe_j['recipe'])):
-        print recipe_j['recipe'][i]['ingredient'] + '\t\t ' + str(recipe_j['recipe'][i]['amount']) + 'oz'
     try:
-        pullStationData(STATION_ID)
+        pullStationData()
     except:
         print >> sys.stderr, '[ERROR] Could Not Retrieve Station Data'
-        conn.sendall("34 Controller Could Not Retrieve Station Data")
+        conn.sendall("45 Controller Could Not Retrieve Station Data")
+        return '08 ERROR'
+    try:
+        parseRecipe(recipe_j)
+    except:
+        print >> sys.stderr, '[ERROR] Could Not Match Station Liquids To Recipe'
+        conn.sendall("55 Controller Could Not Match Station Liquids To Recipe")
+        raise
         return '08 ERROR'
     if checkAmounts(recipe_j, conn):
         LED_pattern = 1
-        time1 = dispensePressurizedIngredients(io_board, recipe_j, conn)
+        print >> sys.stderr, '[INFO] Starting Pour, Raising Drink'
+        conn.sendall("31 Starting Pour, Raising Drink")
+        dispensePressurizedIngredients(io_board, recipe_j, conn)
+        pumpOnOff(io_board=io_board, mode="PRESSURIZE", on=True)
+        #WAIT FOR TOP SWITCH ACTIVATION
+        # channel = GPIO.wait_for_edge(PUMP_SWITCH_GPIO, GPIO.FALLING, timeout=PUMP_TIMEOUT_MS)
+        # if channel is None:
+        #     print >> sys.stderr, '[ERROR] Timeout waiting for chamber to rise'
+        #     conn.sendall("38 Timeout waiting for chamber to rise")
+        #     pumpOnOff(io_board=io_board)
+        #     LED_pattern = 0
+        #     return '08 ERROR'
+        # time.sleep(PUMP_EXTRA_MS/1000.0)
         pumpOnOff(io_board=io_board, mode="VACUUM", on=True)
-        time2 = dispenseVacuumIngredients(io_board, recipe_j, conn)
+        dispenseVacuumIngredients(io_board, recipe_j, conn)
         #PURGE INGREDIENTS SUPPLY LINE
         activateOutput(io_board=io_board, output=AIR_PURGE_VALVE, time_ms=LINE_PURGE_TIME_MS)
-        #DRAIN DRINK
-        conn.sendall('16 Pouring Drink')
-        drain_time = time1*PRESSURED_DRAIN_TIME_MULT + time2*UNPRESSURED_DRAIN_TIME_MULT + DRAIN_TIME_ADDON_MS
-        pumpOnOff(io_board=io_board, mode="PRESSURIZE", on=True)
-        activateOutput(io_board=io_board, output=DRAIN_VALVE)
-        time.sleep(drain_time/1000.0)
-        activateOutput(io_board=io_board, output=DRAIN_VALVE, on=False)
+        print >> sys.stderr, '[INFO] Pour Complete, Lowering Drink'
+        conn.sendall("32 Pour Complete, Lowering Drink")
+        #SEND PROMPT TO ADD NOT-CONNECTED ITEMS
+        for liquid in onHandLiquids:
+            length = len(str(onHandLiquids[liquid]['amount'])) + len(onHandLiquids[liquid]['brand']) + len(onHandLiquids[liquid]['type'])
+            conn.sendall(str(length + 16)+' Add ' + str(onHandLiquids[liquid]['amount']) + ' oz. of ' + onHandLiquids[liquid]['brand'] + ' ' + onHandLiquids[liquid]['type'])
+        for i in range(0, len(garnishes)):
+            length = len(garnishes[i]['amount']) + len(garnishes[i]['name'])
+            conn.sendall(str(length + 11)+' Add ' + garnishes[i]['amount'] + ' of ' + garnishes[i]['name'])
+        #TURN OFF PUMP AND RELEASE PRESSURE IN CHAMBER
         pumpOnOff(io_board)
+        #RINSE THE CHAMBER
+        rinseCycle(conn, io_board=io_board, time_ms=RINSE_FILL_TIME_MS)
         LED_pattern = 0
+        print >> sys.stderr, '[INFO] Rinse Complete, Station Ready'
+        conn.sendall("32 Rinse Complete, Station Ready")
         return '07 DONE'
     else:
+        LED_pattern = 0
         return '08 ERROR'
 
-def pullStationData(stationID):
-    req = urllib2.Request(BASE_API_HOST_URL + STATIONQUERY_URL + stationID)
+def pullStationData():
+    global station_j
+    req = urllib2.Request(BASE_API_HOST_URL + STATIONQUERY_URL + STATION_ID)
     response = urllib2.urlopen(req)
     station_j = json.load(response)
-    for i in range(0, len(station_j['ingredients'])):
-        ingredient = station_j['ingredients'][i]['type']
-        if ingredient != '':
-            ingredients[ingredient] = station_j['ingredients'][i]
 
 def reset(io_board):
     global lock
@@ -349,7 +379,7 @@ def reset(io_board):
     LED_pattern = 0
     setupOutputs(io_board)
     try:
-        pullStationData(STATION_ID)
+        pullStationData()
     except:
         print >> sys.stderr, '[ERROR] Could Not Retrieve Station Data'
 
@@ -361,9 +391,13 @@ def parseCmd(cmd, data, conn, io_board):
     elif cmd == '01': #Make Recipe with ID (data)
         conn.sendall("22 Received Command " + cmd)
         req = urllib2.Request(BASE_API_HOST_URL+ RECIPE_URL + data)
-        url_response = urllib2.urlopen(req)
-        recipe_j = json.load(url_response)
-        return makeDrink(io_board, recipe_j, conn)
+        try:
+            url_response = urllib2.urlopen(req)
+            recipe_j = json.load(url_response)
+            return makeDrink(io_board, recipe_j, conn)
+        except:
+            print >> sys.stderr, '[ERROR] Could Not Retrieve Recipe Data'
+            raise
     elif cmd == '02': #Make Recipe Selected by User with ID (data)
         conn.sendall("22 Received Command " + cmd)
 
@@ -386,30 +420,30 @@ def parseCmd(cmd, data, conn, io_board):
         return '07 DONE'
     elif cmd == '06': #Set Station ID
         conn.sendall("22 Received Command " + cmd)
-        cfgfile = open('config.ini','w')
+        cfgfile = open('/home/pi/controller/config.ini','w')
         parser.set('API', 'station_id', data)
         parser.write(cfgfile)
         cfgfile.close()
         return '07 DONE'
     elif cmd == '07': #Fill Full Rinse
         conn.sendall("22 Received Command " + cmd)
-        fillRinse(io_board)
+        fillRinse(io_board, RINSE_FILL_TIME_MS)
         return '07 DONE'
-    elif cmd == '08': #Drain Full Rinse
+    elif cmd == '08': #
         conn.sendall("22 Received Command " + cmd)
-        drainRinse(io_board)
+        print GPIO.input(4)
         return '07 DONE'
-    elif cmd == '09': #Activate Vacuum (BUBBLES/PURGE)
+    elif cmd == '09': #
         conn.sendall("22 Received Command " + cmd)
-        bubblesOnOff(io_board, on=True)
+
         return '07 DONE'
-    elif cmd == '10': #Turn off Vacuum (BUBBLES/PURGE)
+    elif cmd == '10': #
         conn.sendall("22 Received Command " + cmd)
-        bubblesOnOff(io_board, on=False)
+
         return '07 DONE'
     elif cmd == '11': #Pull Station Data from Database
         conn.sendall("22 Received Command " + cmd)
-        pullStationData(STATION_ID)
+        pullStationData()
         return '07 DONE'
     elif cmd == '12': #Test Valves/Outputs
         conn.sendall("22 Received Command " + cmd)
@@ -426,11 +460,11 @@ def connectionWorker(conn):
     data = ''
     try:
         cmd = conn.recv(2)
-        print 'Received Command: "%s"' % cmd
+        print '[INFO] Received Command: "%s"' % cmd
         if int(cmd) >= 1 and int(cmd) <= 6:
             data = conn.recv(33)
             data = data[1:33]
-            print 'Received Data: "%s"' % data
+            print '[INFO] Received Data: "%s"' % data
         response = parseCmd(cmd, data, conn, io_board)
         if response:
             conn.sendall(response)
@@ -441,6 +475,7 @@ def connectionWorker(conn):
     except Exception as e:
         conn.sendall('08 ERROR')
         print >> sys.stderr, '[ERROR] In connectionWorker:' + str(e)
+        raise
     finally:
         conn.close()
         lock = False
@@ -454,9 +489,11 @@ io_board = {}
 stop = False        #Flag to stop threads
 lock = False        #Lock to decline further connections during a processing job
 LED_pattern = 0     #Current Pattern For LEDs
-station_j = {}      #Python object of retrieved station JSON data
-ingredients = {}    #Array of ingredient objects from station JSON data referenced by ingredient
-                    #to reference by ingredient for matching to recipe_j, & updating amounts
+station_j = {}      #Dictionary of retrieved station JSON data
+matchedLiquids = {} #Dictionary of the specific station connected liquids to use, with key values of
+                    #the generic recipe liquids id
+garnishes = []      #List of garnishe objects to add after drink is made
+onHandLiquids = {}  #Dictionary of not-connected liquids to add after drink is made
 threads = []
 
 if __name__ == '__main__':
@@ -479,7 +516,7 @@ if __name__ == '__main__':
         ledThread.start()
     except:
         print >> sys.stderr, '[ERROR] Could Not Setup LED thread'
-    print >> sys.stderr, 'Attempting To Pull Station Data from ' + BASE_API_HOST_URL + STATIONQUERY_URL
+    print >> sys.stderr, '[INFO] Attempting To Pull Station Data from ' + BASE_API_HOST_URL + STATIONQUERY_URL
     try:
         STATION_ID = parser.get('API', 'station_id')
         STATION_AUTH = parser.get('API', 'station_auth')
@@ -488,23 +525,24 @@ if __name__ == '__main__':
     except Exception as e:
         print >> sys.stderr, '[WARNING] ' + e[0]
     try:
-        pullStationData(STATION_ID)
+        pullStationData()
+        print >> sys.stderr, '[INFO] Got Station data'
     except:
         print >> sys.stderr, '[ERROR] Unable to pull station data'
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    print >> sys.stderr, 'Starting Socket Server at ' + BIND_IP + ':' + str(BIND_PORT)
+    print >> sys.stderr, '[INFO] Starting Socket Server at ' + BIND_IP + ':' + str(BIND_PORT)
     try:
         s.bind((BIND_IP,BIND_PORT))
     except socket.error as msg:
         print >> sys.stderr, '[ERROR] Bind failed. Error Code: ' + str(msg[0]) + ' Message: ' + msg[1]
 
     s.listen(5)
-    print ('Press Ctrl-C To Quit')
+    print ('***** Press Ctrl-C To Quit *****')
     while not stop:
-        print >> sys.stderr, 'TOB Waiting For Connection'
+        print >> sys.stderr, '[INFO] TOB Waiting For Connection'
         try:
             conn, addr = s.accept()
-            print >> sys.stderr, 'TOB Client Connected:', addr
+            print >> sys.stderr, '[INFO] TOB Client Connected:', addr
             if lock:
                 conn.sendall('07 BUSY')
                 conn.close()
