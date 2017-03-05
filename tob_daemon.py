@@ -34,14 +34,18 @@ LINE_PURGE_TIME_MS = parser.getint('StationCalibration', 'line_purge_time_ms')
 VALVE_TEST_INTERVAL_MS = parser.getint('StationCalibration', 'valve_test_interval_ms')
 CHAMBER_FALL_TIME_MS = parser.getint('StationCalibration', 'chamber_fall_time_ms')
 PUMP_TIMEOUT_MS = parser.getint('StationCalibration', 'pump_timeout_ms')
+DRINK_REMOVE_TIMEOUT_MS = parser.getint('StationCalibration', 'drink_remove_timeout_ms')
 PUMP_EXTRA_MS = parser.getint('StationCalibration', 'pump_extra_ms')
 MAX_DRINK_SIZE = parser.getint('StationCalibration', 'max_drink_size_oz')
-PUMP_SWITCH_GPIO = parser.getint('OutputMapping', 'pump_switch_gpio')
+BUTTON_SWITCH_GPIO = parser.getint('OutputMapping', 'BUTTON_switch_gpio')
+PUMP_TOP_SWITCH_GPIO = parser.getint('OutputMapping', 'pump_top_switch_gpio')
+PUMP_BOTTOM_SWITCH_GPIO = parser.getint('OutputMapping', 'pump_bottom_switch_gpio')
 PUMP_OUTPUT = parser.getint('OutputMapping', 'pump_output')
 PRESSURE_BYPASS_VALVE = parser.getint('OutputMapping', 'pressure_bypass_valve')
 PRESSURIZE_VALVE = parser.getint('OutputMapping', 'pressurize_valve')
 RINSE_TANK_VALVE = parser.getint('OutputMapping', 'rinse_tank_valve')
 AIR_PURGE_VALVE = parser.getint('OutputMapping', 'air_purge_valve')
+MANUAL_BUTTON_VALVE = parser.getint('OutputMapping', 'manual_button_valve')
 ON = parser.getint('OutputMapping', 'on')
 OFF =parser.getint('OutputMapping', 'off')
 LED_COUNT      = parser.getint('LED', 'led_count')
@@ -94,9 +98,9 @@ def ledWorker(strip):
             if LED_pattern == 1:
                 theaterChaseRainbow(strip, wait_ms=40)
             else:
-                time.sleep(100/1000.0)
+                time.sleep(250/1000.0)
         except:
-            raise
+            raise Exception("Error in LED Worker")
         finally:
             colorWipe(strip, Color(0, 0, 0),0)
 
@@ -129,7 +133,9 @@ def setupOutputs(io_board):
     io_board[2].write_iodir()
     io_board[3].write_iodir()
     GPIO.setmode(GPIO.BCM)
-    GPIO.setup(4, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    GPIO.setup(PUMP_TOP_SWITCH_GPIO, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    GPIO.setup(PUMP_BOTTOM_SWITCH_GPIO, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    GPIO.setup(BUTTON_SWITCH_GPIO, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
 def activateOutput(output, io_board, time_ms=0, on=True):
     if output >0 and output <=8:
@@ -171,32 +177,65 @@ def testValves (io_board, time_ms):
         time.sleep(time_ms/1000.0)
 
 def pumpOnOff(io_board, mode="VACUUM", on=False):
+    global maintainHeight
     if on:
         if mode == "PRESSURIZE":
             activateOutput(io_board=io_board, output=PUMP_OUTPUT)
             activateOutput(io_board=io_board, output=PRESSURIZE_VALVE)
             activateOutput(io_board=io_board, output=PRESSURE_BYPASS_VALVE, on=False)
+            maintainHeight = False
         elif mode == "VACUUM":
             activateOutput(io_board=io_board, output=PUMP_OUTPUT)
             activateOutput(io_board=io_board, output=PRESSURIZE_VALVE, on=False)
             activateOutput(io_board=io_board, output=PRESSURE_BYPASS_VALVE)
+            maintainHeight = True
         else:
             #incorrect option, do nothing
             activateOutput(io_board=io_board, output=PUMP_OUTPUT, on=False)
             activateOutput(io_board=io_board, output=PRESSURIZE_VALVE, on=False)
             activateOutput(io_board=io_board, output=PRESSURE_BYPASS_VALVE, on=False)
+            maintainHeight = False
     else:
+        #ensure we're not trying to maintain the column height
+        maintainHeight = False
         #shutoff pump
         activateOutput(io_board=io_board, output=PUMP_OUTPUT, on=False)
         #relieve pressure in chamber
         activateOutput(io_board=io_board, output=PRESSURIZE_VALVE)
         activateOutput(io_board=io_board, output=PRESSURE_BYPASS_VALVE)
         activateOutput(io_board=io_board, output=AIR_PURGE_VALVE)
-        time.sleep(CHAMBER_FALL_TIME_MS/1000.0)
-        #now close valves
-        activateOutput(io_board=io_board, output=PRESSURIZE_VALVE, on=False)
-        activateOutput(io_board=io_board, output=PRESSURE_BYPASS_VALVE, on=False)
-        activateOutput(io_board=io_board, output=AIR_PURGE_VALVE, on=False)
+        #closeChamberValves() must be called after the chamber has fallen
+        #should be done by calling function after a timeout
+
+def closeChamberValves():
+    activateOutput(io_board=io_board, output=PRESSURIZE_VALVE, on=False)
+    activateOutput(io_board=io_board, output=PRESSURE_BYPASS_VALVE, on=False)
+    activateOutput(io_board=io_board, output=AIR_PURGE_VALVE, on=False)
+
+def maintainHeightWorker():
+    while not stop:
+        try:
+            if maintainHeight == True:
+                if GPIO.input(PUMP_BOTTOM_SWITCH_GPIO) or GPIO.input(PUMP_TOP_SWITCH_GPIO):
+                    activateOutput(io_board=io_board, output=PRESSURE_BYPASS_VALVE, on=False)
+                    activateOutput(io_board=io_board, output=PRESSURIZE_VALVE)
+                    count = 0
+                    while GPIO.input(PUMP_BOTTOM_SWITCH_GPIO) or GPIO.input(PUMP_TOP_SWITCH_GPIO):
+                        time.sleep(0.5)
+                        count = count + 1
+                        if count > 10:
+                            print >> sys.stderr, '[ERROR] Timeout in Maintain Height Worker'
+                            break
+                    activateOutput(io_board=io_board, output=PRESSURE_BYPASS_VALVE)
+                    activateOutput(io_board=io_board, output=PRESSURIZE_VALVE, on=False)
+                else:
+                    #height is okay
+                    time.sleep(0.5)
+            else:
+                #we're idle, not maintaining
+                time.sleep(0.5)
+        except:
+            raise
 
 def dispensePressurizedIngredients(io_board, recipe_j, conn):
     for i in range (0, len(recipe_j['liquids'])):
@@ -261,22 +300,28 @@ def updateAmount(recipe_j, conn, amount, liquidId):
     except:
         print >> sys.stderr, '[ERROR] Could Not Update Remote Ingredient Data'
 
-def rinseCycle(conn, io_board, time_ms):
+def rinseCycle(io_board, time_ms):
     print >> sys.stderr, '[INFO] Beginning Rinse Cycle'
-    conn.sendall("24 Beginning Rinse Cycle")
     pumpOnOff(io_board=io_board, mode="PRESSURIZE", on=True)
     #WAIT FOR TOP SWITCH ACTIVATION
-    channel = GPIO.wait_for_edge(PUMP_SWITCH_GPIO, GPIO.FALLING, timeout=PUMP_TIMEOUT_MS)
-    if channel is None:
-        pumpOnOff(io_board=io_board)
-        LED_pattern = 0
-        return '08 ERROR'
+    count = 0
+    while GPIO.input(PUMP_TOP_SWITCH_GPIO):
+        time.sleep(0.1)
+        count = count + 1
+        if count > PUMP_TIMEOUT_MS/100:
+            pumpOnOff(io_board=io_board)
+            time.sleep(CHAMBER_FALL_TIME_MS/1000.0)
+            closeChamberValves()
+            LED_pattern = 0
+            return '08 ERROR'
     time.sleep(PUMP_EXTRA_MS/1000.0)
     pumpOnOff(io_board=io_board, mode="VACUUM", on=True)
     activateOutput(io_board=io_board, output=RINSE_TANK_VALVE, time_ms=time_ms)
     #PURGE INGREDIENTS SUPPLY LINE
     activateOutput(io_board=io_board, output=AIR_PURGE_VALVE, time_ms=LINE_PURGE_TIME_MS)
     pumpOnOff(io_board=io_board)
+    time.sleep(CHAMBER_FALL_TIME_MS/1000.0)
+    closeChamberValves()
 
 def parseRecipe(recipe_j):
     global matchedLiquids
@@ -328,19 +373,37 @@ def makeDrink(io_board, recipe_j, conn):
         return '08 ERROR'
     if checkAmounts(recipe_j, conn):
         LED_pattern = 1
+        # Make sure a glass is present
+        if GPIO.input(PUMP_BOTTOM_SWITCH_GPIO):
+            conn.sendall("38 Please Place Empty Glass on Station")
+            count = 0
+            while GPIO.input(PUMP_BOTTOM_SWITCH_GPIO):
+                time.sleep(0.25)
+                count = count + 1
+                if count > DRINK_REMOVE_TIMEOUT_MS/100:
+                    print >> sys.stderr, '[ERROR] Timeout waiting for glass placement'
+                    conn.sendall("38 Timeout waiting for glass placement")
+                    LED_pattern = 0
+                    return '08 ERROR'
+            time.sleep(0.75)
         print >> sys.stderr, '[INFO] Starting Pour, Raising Drink'
         conn.sendall("31 Starting Pour, Raising Drink")
         dispensePressurizedIngredients(io_board, recipe_j, conn)
         pumpOnOff(io_board=io_board, mode="PRESSURIZE", on=True)
         #WAIT FOR TOP SWITCH ACTIVATION
-        # channel = GPIO.wait_for_edge(PUMP_SWITCH_GPIO, GPIO.FALLING, timeout=PUMP_TIMEOUT_MS)
-        # if channel is None:
-        #     print >> sys.stderr, '[ERROR] Timeout waiting for chamber to rise'
-        #     conn.sendall("38 Timeout waiting for chamber to rise")
-        #     pumpOnOff(io_board=io_board)
-        #     LED_pattern = 0
-        #     return '08 ERROR'
-        # time.sleep(PUMP_EXTRA_MS/1000.0)
+        count = 0
+        while GPIO.input(PUMP_TOP_SWITCH_GPIO):
+            time.sleep(0.25)
+            count = count + 1
+            if count > PUMP_TIMEOUT_MS/250:
+                print >> sys.stderr, '[ERROR] Timeout waiting for chamber to rise'
+                conn.sendall("38 Timeout waiting for chamber to rise")
+                pumpOnOff(io_board=io_board)
+                time.sleep(CHAMBER_FALL_TIME_MS/1000.0)
+                closeChamberValves()
+                LED_pattern = 0
+                return '08 ERROR'
+        time.sleep(PUMP_EXTRA_MS/1000.0)
         pumpOnOff(io_board=io_board, mode="VACUUM", on=True)
         dispenseVacuumIngredients(io_board, recipe_j, conn)
         #PURGE INGREDIENTS SUPPLY LINE
@@ -356,8 +419,27 @@ def makeDrink(io_board, recipe_j, conn):
             conn.sendall(str(length + 11)+' Add ' + garnishes[i]['amount'] + ' of ' + garnishes[i]['name'])
         #TURN OFF PUMP AND RELEASE PRESSURE IN CHAMBER
         pumpOnOff(io_board)
+        #WAIT A MINIMUM AMOUNT OF 4 SECs TIME BEFORE CHECKING FOR GLASS REMOVAL
+        time.sleep(4)
+        #WAIT FOR BOTTOM SWITCH RELEASE (Drink Removal)
+        while not GPIO.input(PUMP_BOTTOM_SWITCH_GPIO):
+            time.sleep(0.25)
+            count = count + 1
+            if count > CHAMBER_FALL_TIME_MS/250:
+                break
+        closeChamberValves()
+        while not GPIO.input(PUMP_BOTTOM_SWITCH_GPIO):
+            time.sleep(0.25)
+            count = count + 1
+            if count > DRINK_REMOVE_TIMEOUT_MS/100:
+                print >> sys.stderr, '[ERROR] Timeout waiting for drink removal'
+                conn.sendall("36 Timeout waiting for drink removal")
+                LED_pattern = 0
+                return '08 ERROR'
+        time.sleep(0.75)
         #RINSE THE CHAMBER
-        rinseCycle(conn, io_board=io_board, time_ms=RINSE_FILL_TIME_MS)
+        conn.sendall("24 Beginning Rinse Cycle")
+        rinseCycle(io_board=io_board, time_ms=RINSE_FILL_TIME_MS)
         LED_pattern = 0
         print >> sys.stderr, '[INFO] Rinse Complete, Station Ready'
         conn.sendall("32 Rinse Complete, Station Ready")
@@ -431,7 +513,7 @@ def parseCmd(cmd, data, conn, io_board):
         return '07 DONE'
     elif cmd == '08': #
         conn.sendall("22 Received Command " + cmd)
-        print GPIO.input(4)
+
         return '07 DONE'
     elif cmd == '09': #
         conn.sendall("22 Received Command " + cmd)
@@ -481,6 +563,72 @@ def connectionWorker(conn):
         lock = False
         threads.remove(threading.current_thread())
 
+def buttonWorker():
+    global lock
+    buttonWasPressed = False
+    try:
+        while not stop:
+            if not lock or buttonWasPressed:
+                if not GPIO.input(BUTTON_SWITCH_GPIO):
+                    #button is pressed, make sure glass is present
+                    print "Button Pressed!"
+                    if not GPIO.input(PUMP_BOTTOM_SWITCH_GPIO):
+                        #glass is present, set lock, activate the appropriate valve
+                        lock = True
+                        buttonWasPressed = True
+                        activateOutput(io_board=io_board, output=MANUAL_BUTTON_VALVE, on=True)
+                        #wait for button release
+                        count = 0
+                        while not GPIO.input(BUTTON_SWITCH_GPIO):
+                            time.sleep(0.25)
+                            if count > 240: #60000/250:
+                                print >> sys.stderr, '[ERROR] Timeout waiting for button relase'
+                                break
+                        print "Button Released"
+                        activateOutput(io_board=io_board, output=MANUAL_BUTTON_VALVE, on=False)
+                    else:
+                        #button was pressed but no glass present, ignore
+                        time.sleep(2)
+                else:
+                    if buttonWasPressed == True:
+                        #button was pressed, wait for glass removal then rinse
+                        count = 0
+                        while not GPIO.input(PUMP_BOTTOM_SWITCH_GPIO):
+                            time.sleep(0.25)
+                            count = count + 1
+                            if count > DRINK_REMOVE_TIMEOUT_MS/250:
+                                print >> sys.stderr, '[ERROR] Timeout waiting for drink removal'
+                                break
+                            elif not GPIO.input(BUTTON_SWITCH_GPIO):
+                                activateOutput(io_board=io_board, output=MANUAL_BUTTON_VALVE, on=True)
+                                #wait for button release
+                                count = 0
+                                while not GPIO.input(BUTTON_SWITCH_GPIO):
+                                    time.sleep(0.125)
+                                    if count > 480: #60000/125:
+                                        print >> sys.stderr, '[ERROR] Timeout waiting for button relase'
+                                        break
+                                print "Button Released"
+                                activateOutput(io_board=io_board, output=MANUAL_BUTTON_VALVE, on=False)
+                                count = 0
+                        #Drink removed, wait a brief period
+                        time.sleep(1)
+                        #RINSE THE CHAMBER
+                        rinseCycle(io_board=io_board, time_ms=RINSE_FILL_TIME_MS)
+                        #we're done, remove lock
+                        lock = False
+                        buttonWasPressed = False
+                    else:
+                        #we're sitting idle
+                        time.sleep(0.5)
+            else:
+                #we're locked out idle, no button was pressed
+                time.sleep(0.5)
+    except:
+        raise
+
+
+
 ###############################################################################
 #Main Program
 ###############################################################################
@@ -495,6 +643,8 @@ matchedLiquids = {} #Dictionary of the specific station connected liquids to use
 garnishes = []      #List of garnishe objects to add after drink is made
 onHandLiquids = {}  #Dictionary of not-connected liquids to add after drink is made
 threads = []
+maintainHeight = False    #If true, the maintainHeight thread will activate the pump if the top or bottom
+                    #limit switches become unactivated due to any air leaks in the column
 
 if __name__ == '__main__':
     address = 0x20
@@ -516,6 +666,20 @@ if __name__ == '__main__':
         ledThread.start()
     except:
         print >> sys.stderr, '[ERROR] Could Not Setup LED thread'
+    try:
+        # Start Maintain Height Thread to keep column at height during pour if it leaks air
+        heightThread = threading.Thread(target=maintainHeightWorker)
+        threads.append(heightThread)
+        heightThread.start()
+    except:
+        print >> sys.stderr, '[ERROR] Could Not Setup Maintain Height thread'
+    try:
+        # Start Button Thread to handle manual button pours
+        buttonThread = threading.Thread(target=buttonWorker)
+        threads.append(buttonThread)
+        buttonThread.start()
+    except:
+        print >> sys.stderr, '[ERROR] Could Not Setup Maintain Height thread'
     print >> sys.stderr, '[INFO] Attempting To Pull Station Data from ' + BASE_API_HOST_URL + STATIONQUERY_URL
     try:
         STATION_ID = parser.get('API', 'station_id')
@@ -555,4 +719,5 @@ if __name__ == '__main__':
     for thread in threads:
         thread.join()
     s.close()
+    GPIO.cleanup()
     print '\r\nGoodbye!\r\n'
