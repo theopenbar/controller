@@ -1,0 +1,6 @@
+[submodule "libraries/rpi_ws281x_submodule"]
+	path = libraries/rpi_ws281x_submodule
+	url = git://github.com/jgarff/rpi_ws281x
+[submodule "libraries/Adafruit_Python_GPIO_submodule"]
+	path = libraries/Adafruit_Python_GPIO_submodule
+	url = git://github.com/adafruit/Adafruit_Python_GPIO
